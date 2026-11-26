@@ -8,6 +8,8 @@
 //   Group 0, Binding 0: FrameUniforms  (per-frame, set once)
 //   Group 1, Binding 0: ObjectUniforms (per-object)
 //   Group 1, Binding 1: MaterialUniforms (per-material, 32 bytes)
+//   Group 1, Binding 2: color map (texture_2d, a 1x1 white texture when the material has none)
+//   Group 1, Binding 3: its sampler
 
 // --- Uniform structs (must match Go layout byte-for-byte) ---
 
@@ -46,6 +48,8 @@ struct MaterialUniforms {
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(1) @binding(0) var<uniform> object: ObjectUniforms;
 @group(1) @binding(1) var<uniform> material: MaterialUniforms;
+@group(1) @binding(2) var color_map: texture_2d<f32>;
+@group(1) @binding(3) var color_sampler: sampler;
 
 // --- Vertex I/O ---
 
@@ -91,8 +95,11 @@ const LIGHT_DIRECTIONAL: u32 = 1u;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let base_color = material.color.rgb;
-    let alpha = material.color.a;
+    // The color map multiplies the base color and the alpha. A material without a map is bound a
+    // 1x1 white texture. It is sampled first, in uniform control flow, before any discard.
+    let texel = textureSample(color_map, color_sampler, in.uv);
+    let base_color = material.color.rgb * texel.rgb;
+    let alpha = material.color.a * texel.a;
 
     // Alpha test (AlphaModeMask): discard fragments below cutoff.
     if alpha < material.alpha_cutoff {

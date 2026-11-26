@@ -26,6 +26,7 @@ type StandardMaterial struct {
 	alphaCutoff float32
 	doubleSided bool
 	wireframe   bool
+	colorMap    *Texture
 }
 
 // NewStandardMaterial creates a PBR material with the given options.
@@ -62,6 +63,9 @@ func (m *StandardMaterial) RenderBucket() RenderBucket {
 
 // DoubleSided reports whether back-face culling is disabled.
 func (m *StandardMaterial) DoubleSided() bool { return m.doubleSided }
+
+// Map returns the color map multiplied with the base color, or nil.
+func (m *StandardMaterial) Map() *Texture { return m.colorMap }
 
 // Wireframe reports whether the material renders as wireframe.
 func (m *StandardMaterial) Wireframe() bool { return m.wireframe }

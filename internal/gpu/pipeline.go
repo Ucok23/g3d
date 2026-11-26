@@ -94,7 +94,8 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 		return nil, fmt.Errorf("g3d: create frame bind group layout: %w", err)
 	}
 
-	// Group 1: per-object uniforms (ObjectUniforms binding 0, MaterialUniforms binding 1).
+	// Group 1: per-object uniforms (ObjectUniforms binding 0, MaterialUniforms binding 1),
+	// the color map (binding 2) and its sampler (binding 3).
 	objectLayout, err := c.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
 		Label: "g3d_object_layout_" + key.ShaderID,
 		Entries: []gputypes.BindGroupLayoutEntry{
@@ -107,6 +108,20 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 				Binding:    1,
 				Visibility: gputypes.ShaderStageFragment,
 				Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: materialUniformSize},
+			},
+			{
+				// The color map. A material without one gets a 1x1 white texture, so every draw binds a texture.
+				Binding:    2,
+				Visibility: gputypes.ShaderStageFragment,
+				Texture: &gputypes.TextureBindingLayout{
+					SampleType:    gputypes.TextureSampleTypeFloat,
+					ViewDimension: gputypes.TextureViewDimension2D,
+				},
+			},
+			{
+				Binding:    3,
+				Visibility: gputypes.ShaderStageFragment,
+				Sampler:    &gputypes.SamplerBindingLayout{Type: gputypes.SamplerBindingTypeFiltering},
 			},
 		},
 	})

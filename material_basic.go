@@ -17,6 +17,7 @@ type BasicMaterial struct {
 	opacity     float32
 	doubleSided bool
 	wireframe   bool
+	colorMap    *Texture
 }
 
 // NewBasicMaterial creates an unlit material with the given options.
@@ -46,6 +47,9 @@ func (m *BasicMaterial) RenderBucket() RenderBucket {
 
 // DoubleSided reports whether back-face culling is disabled.
 func (m *BasicMaterial) DoubleSided() bool { return m.doubleSided }
+
+// Map returns the color map multiplied with the color, or nil.
+func (m *BasicMaterial) Map() *Texture { return m.colorMap }
 
 // Wireframe reports whether the material renders as wireframe.
 func (m *BasicMaterial) Wireframe() bool { return m.wireframe }

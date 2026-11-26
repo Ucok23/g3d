@@ -90,3 +90,17 @@ func (o alphaCutoffOption) applyStandard(m *StandardMaterial) { m.alphaCutoff = 
 // Fragments with alpha below this value are discarded.
 // Only affects StandardMaterial; ignored by BasicMaterial.
 func WithAlphaCutoff(cutoff float32) MaterialOption { return alphaCutoffOption{cutoff} }
+
+type mapOption struct{ t *Texture }
+
+func (o mapOption) applyBasic(m *BasicMaterial)       { m.colorMap = o.t }
+func (o mapOption) applyStandard(m *StandardMaterial) { m.colorMap = o.t }
+
+// WithMap sets the color map: a Texture whose texels are multiplied with the color (and its alpha with
+// the opacity). Applies to both BasicMaterial and StandardMaterial. A nil texture means no map.
+func WithMap(t *Texture) MaterialOption { return mapOption{t} }
+
+// mapped is implemented by materials that carry a color map; the renderer binds it to the draw.
+type mapped interface {
+	Map() *Texture
+}

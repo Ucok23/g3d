@@ -61,6 +61,11 @@ type Renderer struct {
 	geomIdxBufs   map[Geometry]*wgpu.Buffer
 	geomIdxCounts map[Geometry]uint32
 
+	// Cached GPU textures keyed by Texture pointer identity, uploaded on first use, and the 1x1 white
+	// texture bound for materials without a color map (see renderer_texture.go).
+	textures       map[*Texture]*gpuTexture
+	defaultTexture *gpuTexture
+
 	// Frame bind groups (group 0) — one per distinct pipeline used in a frame.
 	// Released at the start of the next frame, when the GPU has finished the
 	// previous command buffer (VSync guarantees this for swapchain-based rendering).
@@ -477,12 +482,18 @@ func (r *Renderer) recordDrawCall(
 		r.objectBindGroups[idx] = nil
 	}
 
+	colorMap, err := r.materialTexture(device, queue, mat)
+	if err != nil {
+		return fmt.Errorf("color map: %w", err)
+	}
 	objBG, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
 		Label:  "g3d_object_bg",
 		Layout: bundle.ObjectLayout,
 		Entries: []wgpu.BindGroupEntry{
 			{Binding: 0, Buffer: r.objectUniformBufs[idx], Size: uint64(len(objBytes))},
 			{Binding: 1, Buffer: r.materialUniformBufs[idx], Size: uint64(len(matBytes))},
+			{Binding: 2, TextureView: colorMap.view},
+			{Binding: 3, Sampler: colorMap.sampler},
 		},
 	})
 	if err != nil {
@@ -750,6 +761,8 @@ func (r *Renderer) releasePersistentResources() {
 	}
 	r.geomIdxBufs = nil
 	r.geomIdxCounts = nil
+
+	r.releaseTextures()
 }
 
 // createVertexBuffer creates a vertex buffer from geometry data using
