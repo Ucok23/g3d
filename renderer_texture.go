@@ -48,8 +48,8 @@ func filterMode(f TextureFilter) gputypes.FilterMode {
 }
 
 // uploadTexture creates the GPU texture and sampler for t and writes its pixels.
-// The texels are read as they are (RGBA8Unorm): the renderer applies no color-space conversion yet.
-func uploadTexture(device *wgpu.Device, queue *wgpu.Queue, label string, w, h int, pixels []byte, wrapU, wrapV TextureWrap, mag, minification TextureFilter) (*gpuTexture, error) {
+// format is RGBA8Unorm (read as stored) or RGBA8UnormSrgb (decoded to linear by the GPU, and filtered in linear space).
+func uploadTexture(device *wgpu.Device, queue *wgpu.Queue, label string, format gputypes.TextureFormat, w, h int, pixels []byte, wrapU, wrapV TextureWrap, mag, minification TextureFilter) (*gpuTexture, error) {
 	size := wgpu.Extent3D{Width: uint32(w), Height: uint32(h), DepthOrArrayLayers: 1} //nolint:gosec // G115: Texture sizes are limited to 8192
 	tex, err := device.CreateTexture(&wgpu.TextureDescriptor{
 		Label:         label,
@@ -57,7 +57,7 @@ func uploadTexture(device *wgpu.Device, queue *wgpu.Queue, label string, w, h in
 		MipLevelCount: 1,
 		SampleCount:   1,
 		Dimension:     gputypes.TextureDimension2D,
-		Format:        gputypes.TextureFormatRGBA8Unorm,
+		Format:        format,
 		Usage:         gputypes.TextureUsageTextureBinding | gputypes.TextureUsageCopyDst,
 	})
 	if err != nil {
@@ -99,7 +99,7 @@ func (r *Renderer) ensureTexture(device *wgpu.Device, queue *wgpu.Queue, t *Text
 	if g, ok := r.textures[t]; ok {
 		return g, nil
 	}
-	g, err := uploadTexture(device, queue, "g3d_texture", t.width, t.height, t.pixels, t.wrapU, t.wrapV, t.mag, t.min)
+	g, err := uploadTexture(device, queue, "g3d_texture", r.textureFormat(t.colorSpace), t.width, t.height, t.pixels, t.wrapU, t.wrapV, t.mag, t.min)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (r *Renderer) whiteTexture(device *wgpu.Device, queue *wgpu.Queue) (*gpuTex
 	if r.defaultTexture != nil {
 		return r.defaultTexture, nil
 	}
-	g, err := uploadTexture(device, queue, "g3d_white", 1, 1, []byte{255, 255, 255, 255}, WrapClamp, WrapClamp, FilterLinear, FilterLinear)
+	g, err := uploadTexture(device, queue, "g3d_white", gputypes.TextureFormatRGBA8Unorm, 1, 1, []byte{255, 255, 255, 255}, WrapClamp, WrapClamp, FilterLinear, FilterLinear)
 	if err != nil {
 		return nil, err
 	}

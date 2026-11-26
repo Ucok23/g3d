@@ -40,13 +40,14 @@ const maxTextureSize = 8192
 // A Texture only holds data. The Renderer uploads it to the GPU the first time a material that uses it
 // is drawn, and keeps it until the Renderer is released. Do not change the pixels after that.
 //
-// The renderer samples the texels as they are: no color-space conversion is applied (see the
-// color management notes in the documentation of the renderer).
+// With ColorManagementOff (the default) the renderer samples the texels as they are. With ColorManagementSRGB
+// it decodes them to linear light according to the color space of the texture (ColorSpaceSRGB by default).
 type Texture struct {
 	width, height int
 	pixels        []byte
 	wrapU, wrapV  TextureWrap
 	mag, min      TextureFilter
+	colorSpace    ColorSpace
 }
 
 // TextureOption configures a Texture.
@@ -61,6 +62,12 @@ func WithWrap(u, v TextureWrap) TextureOption {
 // The default is FilterLinear for both.
 func WithFilter(mag, minification TextureFilter) TextureOption {
 	return func(t *Texture) { t.mag, t.min = mag, minification }
+}
+
+// WithColorSpace sets how the texels are encoded: ColorSpaceSRGB (the default) for color images, ColorSpaceLinear
+// for data images such as normal or roughness maps. It matters only when the renderer has color management on.
+func WithColorSpace(cs ColorSpace) TextureOption {
+	return func(t *Texture) { t.colorSpace = cs }
 }
 
 // NewTexture creates a Texture from width x height RGBA pixels (4 bytes each, straight alpha, top row
@@ -105,6 +112,9 @@ func (t *Texture) Pixels() []byte { return t.pixels }
 
 // Wrap returns the address modes along u and v.
 func (t *Texture) Wrap() (u, v TextureWrap) { return t.wrapU, t.wrapV }
+
+// ColorSpace returns how the texels are encoded.
+func (t *Texture) ColorSpace() ColorSpace { return t.colorSpace }
 
 // Filter returns the magnification and minification filters.
 func (t *Texture) Filter() (mag, minification TextureFilter) { return t.mag, t.min }

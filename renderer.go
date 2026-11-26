@@ -66,6 +66,9 @@ type Renderer struct {
 	textures       map[*Texture]*gpuTexture
 	defaultTexture *gpuTexture
 
+	// How colors are treated (see ColorManagement); the zero value keeps the earlier behavior.
+	colorManagement ColorManagement
+
 	// Frame bind groups (group 0) — one per distinct pipeline used in a frame.
 	// Released at the start of the next frame, when the GPU has finished the
 	// previous command buffer (VSync guarantees this for swapchain-based rendering).
@@ -274,6 +277,7 @@ func (r *Renderer) buildFrameUniforms(scene *Scene, camera Camera, cameraPos Vec
 	var data gpu.FrameUniformsData
 	data.ViewProjection = camera.ViewProjectionMatrix()
 	data.CameraPosition = [4]float32{cameraPos.X, cameraPos.Y, cameraPos.Z, 1.0}
+	data.Flags = r.frameFlags()
 
 	lightIdx := uint32(0)
 	scene.TraverseVisible(func(node *Node) {
@@ -288,7 +292,7 @@ func (r *Renderer) buildFrameUniforms(scene *Scene, camera Camera, cameraPos Vec
 		data.Lights[lightIdx] = gpu.LightData{
 			Direction: lu.Direction,
 			LightType: lu.Kind,
-			Color:     lu.Color,
+			Color:     r.lightColor(lu.Color),
 			Intensity: lu.Intensity,
 		}
 		lightIdx++
@@ -321,7 +325,7 @@ func (r *Renderer) recordFrame(
 		return fmt.Errorf("g3d: write frame uniforms: %w", err)
 	}
 
-	bg := scene.Background
+	bg := r.clearColor(scene.Background)
 	stencilLoadOp := gputypes.LoadOpUndefined
 	stencilStoreOp := gputypes.StoreOpUndefined
 	stencilReadOnly := true

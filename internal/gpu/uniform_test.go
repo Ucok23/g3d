@@ -135,11 +135,28 @@ func TestPackFrameUniformsPaddingZero(t *testing.T) {
 
 	buf := PackFrameUniforms(data)
 
-	// Padding bytes at offsets 212, 216, 220 should be zero.
+	// The flags (offset 212) are zero unless set, and the padding at 216 and 220 is always zero.
 	for _, off := range []int{212, 216, 220} {
 		val := binary.LittleEndian.Uint32(buf[off : off+4])
 		if val != 0 {
 			t.Errorf("padding at offset %d = %d, want 0", off, val)
+		}
+	}
+}
+
+func TestPackFrameUniformsFlags(t *testing.T) {
+	data := &FrameUniformsData{LightCount: 1, Flags: 3}
+	buf := PackFrameUniforms(data)
+	if got := binary.LittleEndian.Uint32(buf[212:216]); got != 3 {
+		t.Errorf("flags at offset 212 = %d, want 3", got)
+	}
+	for _, off := range []int{208, 216, 220} { // the light count is untouched and the padding stays zero
+		want := uint32(0)
+		if off == 208 {
+			want = 1
+		}
+		if got := binary.LittleEndian.Uint32(buf[off : off+4]); got != want {
+			t.Errorf("offset %d = %d, want %d", off, got, want)
 		}
 	}
 }

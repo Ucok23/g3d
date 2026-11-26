@@ -25,7 +25,7 @@ struct FrameUniforms {
     camera_position: vec4<f32>,      //  16 bytes (offset  64) — vec4, NOT vec3!
     lights: array<LightData, 4>,     // 128 bytes (offset  80) — 4 x 32
     light_count: u32,                //   4 bytes (offset 208)
-    _pad0: u32,                      //   4 bytes (offset 212)
+    flags: u32,                      //   4 bytes (offset 212) — FLAG_MANAGED | FLAG_ENCODE_OUTPUT
     _pad1: u32,                      //   4 bytes (offset 216)
     _pad2: u32,                      //   4 bytes (offset 220)
 };                                   // Total: 224 bytes, 16-byte aligned
@@ -89,6 +89,27 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 // --- Fragment shader ---
 
+// --- Color management ---
+//
+// With frame.flags & FLAG_MANAGED the colors given by the application (material color, texels of an
+// sRGB texture are decoded by the GPU) are sRGB inputs: they are converted to linear light for the lighting
+// and, with FLAG_ENCODE_OUTPUT (the target is not an sRGB format), encoded back to sRGB at the end.
+// Light colors are converted on the CPU.
+
+const FLAG_MANAGED: u32 = 1u;
+const FLAG_ENCODE_OUTPUT: u32 = 2u;
+
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let v = max(c, vec3<f32>(0.0));
+    return select(pow((v + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4)), v / 12.92, v <= vec3<f32>(0.04045));
+}
+
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let v = max(c, vec3<f32>(0.0));
+    return select(1.055 * pow(v, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055), v * 12.92, v <= vec3<f32>(0.0031308));
+}
+
+
 // Light type constants (must match Go LightKind values).
 const LIGHT_AMBIENT: u32 = 0u;
 const LIGHT_DIRECTIONAL: u32 = 1u;
@@ -98,7 +119,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // The color map multiplies the base color and the alpha. A material without a map is bound a
     // 1x1 white texture. It is sampled first, in uniform control flow, before any discard.
     let texel = textureSample(color_map, color_sampler, in.uv);
-    let base_color = material.color.rgb * texel.rgb;
+    var tint = material.color.rgb;
+    if (frame.flags & FLAG_MANAGED) != 0u {
+        tint = srgb_to_linear(tint);
+    }
+    let base_color = tint * texel.rgb;
     let alpha = material.color.a * texel.a;
 
     // Alpha test (AlphaModeMask): discard fragments below cutoff.
@@ -141,5 +166,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
+    if (frame.flags & FLAG_ENCODE_OUTPUT) != 0u {
+        result = linear_to_srgb(result);
+    }
     return vec4<f32>(result, alpha);
 }
