@@ -99,7 +99,7 @@ func (m *StandardMaterial) AlphaCutoff() float32 { return m.alphaCutoff }
 //	offset 16: metallic      float32
 //	offset 20: roughness     float32
 //	offset 24: alpha_cutoff  float32
-//	offset 28: _padding      float32 (zero)
+//	offset 28: double_sided  float32 (1 when the material is double-sided, else 0)
 func (m *StandardMaterial) UniformData() []byte {
 	var buf [32]byte
 	// Color RGBA (vec4<f32>, 16 bytes)
@@ -111,6 +111,9 @@ func (m *StandardMaterial) UniformData() []byte {
 	binary.LittleEndian.PutUint32(buf[16:20], math.Float32bits(m.metallic))
 	binary.LittleEndian.PutUint32(buf[20:24], math.Float32bits(m.roughness))
 	binary.LittleEndian.PutUint32(buf[24:28], math.Float32bits(m.alphaCutoff))
-	// buf[28:32] is zero-initialized (padding)
+	if m.doubleSided {
+		// the shader turns the normal of a back face toward the viewer
+		binary.LittleEndian.PutUint32(buf[28:32], math.Float32bits(1))
+	}
 	return buf[:]
 }

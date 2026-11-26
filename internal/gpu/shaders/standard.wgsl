@@ -38,7 +38,7 @@ struct MaterialUniforms {
     metalness: f32,                  //  4 bytes (offset 16)
     roughness: f32,                  //  4 bytes (offset 20)
     alpha_cutoff: f32,               //  4 bytes (offset 24)
-    _pad: f32,                       //  4 bytes (offset 28)
+    double_sided: f32,               //  4 bytes (offset 28) — 1.0 when the material is double-sided, else 0.0
 };                                   // Total: 32 bytes, 16-byte aligned
 
 // --- Bind groups ---
@@ -90,7 +90,7 @@ const LIGHT_AMBIENT: u32 = 0u;
 const LIGHT_DIRECTIONAL: u32 = 1u;
 
 @fragment
-fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base_color = material.color.rgb;
     let alpha = material.color.a;
 
@@ -99,15 +99,17 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loca
         discard;
     }
 
-    // Re-normalize after interpolation. The back face of a double-sided material is lit with the
-    // normal turned around, so it is shaded like a front face seen from the other side (glTF 2.0,
-    // "Double Sided"). A single-sided material culls its back faces, so it never gets here.
+    // Re-normalize after interpolation.
     var N = normalize(in.world_normal);
-    if !front_facing {
-        N = -N;
-    }
     // View direction: camera to fragment.
     let V = normalize(frame.camera_position.xyz - in.world_position);
+    // The back face of a double-sided material is lit with the normal turned toward the viewer, so it is
+    // shaded like a front face seen from the other side (glTF 2.0, "Double Sided"). This does not use the
+    // front_facing builtin, which wgpu's software backend does not provide. A single-sided material
+    // culls its back faces, so it is unchanged.
+    if material.double_sided > 0.5 && dot(N, V) < 0.0 {
+        N = -N;
+    }
 
     var result = vec3<f32>(0.0, 0.0, 0.0);
 
