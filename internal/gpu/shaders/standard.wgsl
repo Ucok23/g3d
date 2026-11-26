@@ -90,7 +90,7 @@ const LIGHT_AMBIENT: u32 = 0u;
 const LIGHT_DIRECTIONAL: u32 = 1u;
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     let base_color = material.color.rgb;
     let alpha = material.color.a;
 
@@ -99,8 +99,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    // Re-normalize after interpolation.
-    let N = normalize(in.world_normal);
+    // Re-normalize after interpolation. The back face of a double-sided material is lit with the
+    // normal turned around, so it is shaded like a front face seen from the other side (glTF 2.0,
+    // "Double Sided"). A single-sided material culls its back faces, so it never gets here.
+    var N = normalize(in.world_normal);
+    if !front_facing {
+        N = -N;
+    }
     // View direction: camera to fragment.
     let V = normalize(frame.camera_position.xyz - in.world_position);
 
