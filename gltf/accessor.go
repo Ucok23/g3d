@@ -3,6 +3,7 @@ package gltf
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -149,24 +150,13 @@ func (l *loader) buffer(i int) ([]byte, error) {
 	}
 	b := l.doc.Buffers[i]
 	var data []byte
-	switch {
-	case b.URI == nil:
+	if b.URI == nil {
 		if i != 0 || l.bin == nil {
 			return nil, fmt.Errorf("gltf: buffer %d has no uri and there is no GLB BIN chunk for it", i)
 		}
 		data = l.bin
-	case strings.HasPrefix(*b.URI, "data:"):
-		comma := strings.IndexByte(*b.URI, ',')
-		if comma < 0 || !strings.HasSuffix((*b.URI)[:comma], ";base64") {
-			return nil, fmt.Errorf("gltf: buffer %d has a data URI that is not base64", i)
-		}
-		d, err := base64.StdEncoding.DecodeString((*b.URI)[comma+1:])
-		if err != nil {
-			return nil, fmt.Errorf("gltf: buffer %d: bad base64: %w", i, err)
-		}
-		data = d
-	default:
-		d, err := l.readExternal(*b.URI)
+	} else {
+		d, err := l.readURI(*b.URI)
 		if err != nil {
 			return nil, fmt.Errorf("gltf: buffer %d: %w", i, err)
 		}
@@ -177,6 +167,22 @@ func (l *loader) buffer(i int) ([]byte, error) {
 	}
 	l.buffers[i] = data
 	return data, nil
+}
+
+// readURI returns the bytes a uri names: a base64 data URI, or a file inside the asset's folder.
+func (l *loader) readURI(uri string) ([]byte, error) {
+	if !strings.HasPrefix(uri, "data:") {
+		return l.readExternal(uri)
+	}
+	comma := strings.IndexByte(uri, ',')
+	if comma < 0 || !strings.HasSuffix(uri[:comma], ";base64") {
+		return nil, errors.New("the data URI is not base64")
+	}
+	d, err := base64.StdEncoding.DecodeString(uri[comma+1:])
+	if err != nil {
+		return nil, fmt.Errorf("bad base64: %w", err)
+	}
+	return d, nil
 }
 
 // readExternal reads a file named by a relative URI. The read goes through os.Root, so it never leaves

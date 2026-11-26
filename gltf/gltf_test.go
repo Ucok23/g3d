@@ -260,14 +260,15 @@ func TestMaterialFactorsAlphaAndDoubleSided(t *testing.T) {
 	  "extensions":{"KHR_materials_emissive_strength":{"emissiveStrength":2}}}],`
 	m := mustParse(t, triangleGLB("", `,"material":0`, mats))
 	mat := firstMesh(&m.Root.Node).Material().(*g3d.StandardMaterial)
-	if mat.Color() != g3d.RGBA(0.2, 0.4, 0.6, 0.5) || !near(mat.Metallic(), 0.1) || !near(mat.Roughness(), 0.9) {
+	// glTF factors are linear, g3d colors are sRGB: the loader converts them
+	if mat.Color() != g3d.RGBA(0.2, 0.4, 0.6, 0.5).ToSRGB() || !near(mat.Metallic(), 0.1) || !near(mat.Roughness(), 0.9) {
 		t.Errorf("material = color %v metallic %v roughness %v", mat.Color(), mat.Metallic(), mat.Roughness())
 	}
 	if mat.AlphaMode() != g3d.AlphaModeMask || !near(mat.AlphaCutoff(), 0.3) || !mat.DoubleSided() {
 		t.Errorf("alpha %v cutoff %v double %v", mat.AlphaMode(), mat.AlphaCutoff(), mat.DoubleSided())
 	}
-	if e := mat.Emissive(); !near(e.R, 2) || !near(e.G, 1) || !near(e.B, 0) {
-		t.Errorf("emissive = %v, want the factor times the strength", e)
+	if want := g3d.RGB(2, 1, 0).ToSRGB(); mat.Emissive() != want { // the factor times the strength, in sRGB
+		t.Errorf("emissive = %v, want %v", mat.Emissive(), want)
 	}
 }
 
@@ -302,10 +303,10 @@ func TestMaterialsAreSharedBetweenPrimitives(t *testing.T) {
 // --- warnings ---
 
 func TestUnsupportedFeaturesAreWarnedOnce(t *testing.T) {
-	mats := `"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"normalTexture":{"index":1}}],`
+	mats := `"materials":[{"pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0}},"normalTexture":{"index":1}}],`
 	m := mustParse(t, triangleGLB("", `,"material":0`, mats))
 	joined := strings.Join(m.Warnings, "\n")
-	for _, want := range []string{"baseColorTexture", "normalTexture"} {
+	for _, want := range []string{"metallicRoughnessTexture", "normalTexture"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings %q lack %q", joined, want)
 		}

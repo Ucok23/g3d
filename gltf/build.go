@@ -11,7 +11,8 @@ import (
 
 type geomKey struct {
 	mesh, prim int
-	flip       bool // the instance's transform mirrors the geometry, so its winding is reversed
+	flip       bool   // the instance's transform mirrors the geometry, so its winding is reversed
+	uv         uvSpec // the texture coordinates the geometry carries (set and transform of the base color texture)
 }
 
 // bbox is a box accumulated in float64.
@@ -301,11 +302,27 @@ func (l *loader) addMesh(gn *g3d.Node, mi int, world mat4) error {
 }
 
 // attrs are the vertex attributes of a primitive that the loader reads.
-type attrs struct{ pos, norm, uv *elems }
+type attrs struct {
+	pos, norm, uv *elems
+	spec          uvSpec // how the texture coordinates are transformed
+}
+
+// uvAt returns the texture coordinates of vertex i, with the KHR_texture_transform of the material applied.
+func (a attrs) uvAt(i int) (u, v float32) {
+	if a.uv == nil {
+		return 0, 0
+	}
+	u, v = a.uv.float(i, 0), a.uv.float(i, 1)
+	if a.spec.has {
+		m := a.spec.m
+		return m[0]*u + m[1]*v + m[2], m[3]*u + m[4]*v + m[5]
+	}
+	return u, v
+}
 
 // readAttrs reads POSITION (required), NORMAL and TEXCOORD_0, and says what is skipped.
-func (l *loader) readAttrs(p *primitive) (attrs, error) {
-	var a attrs
+func (l *loader) readAttrs(p *primitive, uv uvSpec) (attrs, error) {
+	a := attrs{spec: uv}
 	pos, ok := p.Attributes["POSITION"]
 	if !ok {
 		l.warnf("a primitive without POSITION is skipped")
@@ -326,13 +343,16 @@ func (l *loader) readAttrs(p *primitive) (attrs, error) {
 			return a, errors.New("NORMAL must be a VEC3 with as many elements as POSITION")
 		}
 	}
-	if i, ok := p.Attributes["TEXCOORD_0"]; ok {
+	name := fmt.Sprintf("TEXCOORD_%d", uv.set)
+	if i, ok := p.Attributes[name]; ok {
 		if a.uv, err = l.accessor(i); err != nil {
 			return a, err
 		}
 		if a.uv.ncomp != 2 || a.uv.count != a.pos.count {
-			return a, errors.New("TEXCOORD_0 must be a VEC2 with as many elements as POSITION")
+			return a, fmt.Errorf("%s must be a VEC2 with as many elements as POSITION", name)
 		}
+	} else if p.Material != nil && l.baseColor(p.Material) != nil {
+		l.warnf("a primitive has a base color texture but no %s: the texture reads one texel", name)
 	}
 	if _, ok := p.Attributes["COLOR_0"]; ok {
 		l.warnf("vertex colors (COLOR_0) are ignored")
@@ -373,14 +393,19 @@ func (l *loader) readIndices(p *primitive, vertices int) ([]uint32, error) {
 // asset has none) and the first texture coordinates, as a triangle list. It returns errSkipped for
 // a primitive the loader leaves out.
 func (l *loader) geometry(mi, pi int, flip bool) (*g3d.BufferGeometry, error) {
-	key := geomKey{mi, pi, flip}
+	p := &l.doc.Meshes[mi].Primitives[pi]
+	var uv uvSpec
+	if slot := l.baseColor(p.Material); slot != nil {
+		uv = slot.uv
+	}
+	key := geomKey{mi, pi, flip, uv}
 	if g, ok := l.geoms[key]; ok {
 		if g == nil {
 			return nil, errSkipped
 		}
 		return g, nil
 	}
-	g, err := l.buildGeometry(&l.doc.Meshes[mi].Primitives[pi], flip)
+	g, err := l.buildGeometry(p, flip, uv)
 	if errors.Is(err, errSkipped) {
 		l.geoms[key] = nil
 	}
@@ -391,7 +416,7 @@ func (l *loader) geometry(mi, pi int, flip bool) (*g3d.BufferGeometry, error) {
 	return g, nil
 }
 
-func (l *loader) buildGeometry(p *primitive, flip bool) (*g3d.BufferGeometry, error) {
+func (l *loader) buildGeometry(p *primitive, flip bool, uv uvSpec) (*g3d.BufferGeometry, error) {
 	mode := 4
 	if p.Mode != nil {
 		mode = *p.Mode
@@ -403,7 +428,7 @@ func (l *loader) buildGeometry(p *primitive, flip bool) (*g3d.BufferGeometry, er
 	if len(p.Targets) > 0 && string(p.Targets) != "null" {
 		l.warnf("morph targets are ignored")
 	}
-	a, err := l.readAttrs(p)
+	a, err := l.readAttrs(p, uv)
 	if err != nil {
 		return nil, err
 	}
@@ -431,8 +456,8 @@ func (l *loader) buildGeometry(p *primitive, flip bool) (*g3d.BufferGeometry, er
 func smoothVertices(a attrs) []float32 {
 	verts := make([]float32, 0, a.pos.count*8)
 	for i := 0; i < a.pos.count; i++ {
-		verts = append(verts, a.pos.float(i, 0), a.pos.float(i, 1), a.pos.float(i, 2), a.norm.float(i, 0), a.norm.float(i, 1), a.norm.float(i, 2))
-		verts = appendUV(verts, a.uv, i)
+		u, v := a.uvAt(i)
+		verts = append(verts, a.pos.float(i, 0), a.pos.float(i, 1), a.pos.float(i, 2), a.norm.float(i, 0), a.norm.float(i, 1), a.norm.float(i, 2), u, v)
 	}
 	return verts
 }
@@ -451,20 +476,13 @@ func flatVertices(a attrs, tris []uint32) ([]float32, []uint32) {
 		}
 		n := faceNormal(p[0], p[1], p[2])
 		for k := 0; k < 3; k++ {
-			verts = append(verts, p[k][0], p[k][1], p[k][2], n[0], n[1], n[2])
-			verts = appendUV(verts, a.uv, int(tris[t+k]))
+			u, v := a.uvAt(int(tris[t+k]))
+			verts = append(verts, p[k][0], p[k][1], p[k][2], n[0], n[1], n[2], u, v)
 			out = append(out, next)
 			next++
 		}
 	}
 	return verts, out
-}
-
-func appendUV(v []float32, ue *elems, i int) []float32 {
-	if ue == nil {
-		return append(v, 0, 0)
-	}
-	return append(v, ue.float(i, 0), ue.float(i, 1))
 }
 
 func faceNormal(a, b, c [3]float32) [3]float32 {
@@ -527,7 +545,7 @@ func (l *loader) material(mi *int) g3d.Material {
 	if mi == nil || *mi < 0 || *mi >= len(l.doc.Materials) {
 		out = g3d.NewStandardMaterial(g3d.WithColor(g3d.White), g3d.WithMetallic(1), g3d.WithRoughness(1))
 	} else {
-		out = l.convertMaterial(&l.doc.Materials[*mi])
+		out = l.convertMaterial(&l.doc.Materials[*mi], l.baseColor(mi))
 	}
 	l.mats[key] = out
 	return out
@@ -561,15 +579,10 @@ func (l *loader) warnTextures(m *material) {
 		{"normalTexture", m.NormalTexture}, {"occlusionTexture", m.OcclusionTexture}, {"emissiveTexture", m.EmissiveTexture},
 	}
 	if m.PBR != nil {
-		slots = append(slots,
-			struct {
-				name string
-				raw  json.RawMessage
-			}{"baseColorTexture", m.PBR.BaseColorTexture},
-			struct {
-				name string
-				raw  json.RawMessage
-			}{"metallicRoughnessTexture", m.PBR.MetallicRoughnessTexture})
+		slots = append(slots, struct {
+			name string
+			raw  json.RawMessage
+		}{"metallicRoughnessTexture", m.PBR.MetallicRoughnessTexture})
 	}
 	for _, t := range slots {
 		if len(t.raw) > 0 {
@@ -578,7 +591,10 @@ func (l *loader) warnTextures(m *material) {
 	}
 }
 
-func (l *loader) convertMaterial(m *material) g3d.Material {
+// convertMaterial builds the g3d material of m. glTF colors are linear and g3d colors are sRGB (the colors you
+// would write in CSS), so the factors are converted with ToSRGB: an unlit material then shows the color glTF
+// means, and with color management on the lighting is done in linear light as glTF specifies.
+func (l *loader) convertMaterial(m *material, slot *mapSlot) g3d.Material {
 	color, metallic, roughness := l.factors(m)
 	mode := g3d.AlphaModeOpaque
 	switch m.AlphaMode {
@@ -591,13 +607,17 @@ func (l *loader) convertMaterial(m *material) g3d.Material {
 	if mode == g3d.AlphaModeOpaque {
 		alpha = 1
 	}
-	col := g3d.RGBA(float32(color[0]), float32(color[1]), float32(color[2]), alpha)
+	col := g3d.RGBA(float32(color[0]), float32(color[1]), float32(color[2]), alpha).ToSRGB()
+	var colorMap *g3d.Texture
+	if slot != nil {
+		colorMap = slot.tex
+	}
 	if _, unlit := m.Extensions["KHR_materials_unlit"]; unlit {
-		return g3d.NewBasicMaterial(g3d.WithColor(col), g3d.WithDoubleSided(m.DoubleSided))
+		return g3d.NewBasicMaterial(g3d.WithColor(col), g3d.WithDoubleSided(m.DoubleSided), g3d.WithMap(colorMap))
 	}
 	opts := []g3d.MaterialOption{
 		g3d.WithColor(col), g3d.WithMetallic(float32(metallic)), g3d.WithRoughness(float32(roughness)),
-		g3d.WithDoubleSided(m.DoubleSided), g3d.WithAlphaMode(mode),
+		g3d.WithDoubleSided(m.DoubleSided), g3d.WithAlphaMode(mode), g3d.WithMap(colorMap),
 	}
 	if mode == g3d.AlphaModeMask {
 		cutoff := 0.5
@@ -608,7 +628,7 @@ func (l *loader) convertMaterial(m *material) g3d.Material {
 	}
 	if len(m.EmissiveFactor) == 3 {
 		k := emissiveStrength(m)
-		opts = append(opts, g3d.WithEmissive(g3d.RGB(float32(m.EmissiveFactor[0]*k), float32(m.EmissiveFactor[1]*k), float32(m.EmissiveFactor[2]*k))))
+		opts = append(opts, g3d.WithEmissive(g3d.RGB(float32(m.EmissiveFactor[0]*k), float32(m.EmissiveFactor[1]*k), float32(m.EmissiveFactor[2]*k)).ToSRGB()))
 	}
 	return g3d.NewStandardMaterial(opts...)
 }

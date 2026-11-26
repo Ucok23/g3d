@@ -18,6 +18,9 @@ type document struct {
 	BufferViews        []bufferView  `json:"bufferViews"`
 	Buffers            []buffer      `json:"buffers"`
 	Cameras            []interface{} `json:"cameras"`
+	Textures           []texture     `json:"textures"`
+	Images             []imageRef    `json:"images"`
+	Samplers           []sampler     `json:"samplers"`
 }
 
 type asset struct {
@@ -109,4 +112,40 @@ type bufferView struct {
 type buffer struct {
 	URI        *string `json:"uri"`
 	ByteLength int     `json:"byteLength"`
+}
+
+type texture struct {
+	Sampler    *int                       `json:"sampler"`
+	Source     *int                       `json:"source"`
+	Extensions map[string]json.RawMessage `json:"extensions"`
+}
+
+// imageRef is an entry of the images array (named so it does not clash with the image package).
+type imageRef struct {
+	URI        *string `json:"uri"`
+	MimeType   string  `json:"mimeType"`
+	BufferView *int    `json:"bufferView"`
+}
+
+type sampler struct {
+	MagFilter *int `json:"magFilter"`
+	MinFilter *int `json:"minFilter"`
+	WrapS     *int `json:"wrapS"`
+	WrapT     *int `json:"wrapT"`
+}
+
+// textureInfo is how a material refers to a texture: the texture, which set of texture coordinates it reads,
+// and extensions such as KHR_texture_transform.
+type textureInfo struct {
+	Index      *int                       `json:"index"`
+	TexCoord   int                        `json:"texCoord"`
+	Extensions map[string]json.RawMessage `json:"extensions"`
+}
+
+// textureTransform is the KHR_texture_transform extension of a textureInfo.
+type textureTransform struct {
+	Offset   []float64 `json:"offset"`
+	Rotation float64   `json:"rotation"`
+	Scale    []float64 `json:"scale"`
+	TexCoord *int      `json:"texCoord"`
 }
