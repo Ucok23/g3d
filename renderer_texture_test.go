@@ -156,3 +156,67 @@ func TestLinearFilteringBlendsTexels(t *testing.T) {
 		t.Errorf("linear filtering at the seam = %v, want a gray between black and white", got)
 	}
 }
+
+// An 8x8 one-pixel checker drawn with its sampler locked to one mip level shows that level. This checks the whole
+// chain on the backend the server uses: the levels are built, uploaded one by one, and the sampler reads the one it is told to.
+func TestSamplerReadsTheMipLevelItIsLockedTo(t *testing.T) {
+	px := func(opts ...TextureOption) [4]byte {
+		tex, err := NewTexture(8, 8, checkerPixels(8), append([]TextureOption{WithFilter(FilterNearest, FilterNearest), WithMipmapFilter(FilterNearest)}, opts...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pixelAt(renderQuad(t, facingQuad(1), NewBasicMaterial(WithMap(tex)), false), 64, 22, 22)
+	}
+	// level 0: a texel of the checker, black or white
+	if got := px(WithLODRange(0, 0.1)); got[0] != 0 && got[0] != 255 {
+		t.Errorf("level 0 = %v, want a black or white texel", got)
+	}
+	// level 3 is 1x1 and holds the average: mid-gray (unmanaged, so the values are averaged as stored)
+	if got := px(WithLODRange(3, 3)); !isColor(got, 128, 128, 128) {
+		t.Errorf("level 3 = %v, want mid-gray", got)
+	}
+	// without a chain there is only level 0, whatever the sampler asks for
+	if got := px(WithMipmaps(false), WithLODRange(3, 3)); got[0] != 0 && got[0] != 255 {
+		t.Errorf("no mipmaps, locked to level 3 = %v, want the base level (a black or white texel)", got)
+	}
+}
+
+// With color management the GPU decodes an sRGB texture before filtering, so the chain is built in linear light:
+// the 1x1 level of a black and white checker reads 188 after the round trip through decoding and encoding.
+func TestMipChainIsBuiltInLinearLightWhenManaged(t *testing.T) {
+	tex, err := NewTexture(8, 8, checkerPixels(8), WithMipmapFilter(FilterNearest), WithLODRange(3, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene := quadScene(NewBasicMaterial(WithMap(tex)), Black)
+	got := pixelAt(renderManaged(t, unorm, ColorManagementSRGB, scene), 64, 22, 22)
+	if !isColor(got, 188, 188, 188) {
+		t.Errorf("managed, level 3 of a black and white checker = %v, want about 188", got)
+	}
+}
+
+// The software backend chooses the mip level from the screen-space derivatives of the texture coordinates (computed
+// between the lanes of a 2x2 quad of fragments), although the doc comment of wgpu's software package still says that
+// implicit-LOD sampling uses the base level. The server render relies on it, so it is pinned here: a one-pixel checker
+// minified about 14 to 1 reads as an even mid-gray with mipmaps and as moire without them.
+func TestSoftwareBackendPicksTheMipLevelFromDerivatives(t *testing.T) {
+	spread := func(opts ...TextureOption) int {
+		tex, err := NewTexture(64, 64, checkerPixels(64), append([]TextureOption{WithWrap(WrapRepeat, WrapRepeat)}, opts...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		px := renderQuad(t, facingQuad(8), NewBasicMaterial(WithMap(tex)), false) // uv 0..8 over about 37 pixels
+		lo, hi := 255, 0
+		for x := uint32(24); x < 40; x++ {
+			v := int(pixelAt(px, 64, x, 32)[0])
+			lo, hi = min(lo, v), max(hi, v)
+		}
+		return hi - lo
+	}
+	if s := spread(); s > 4 {
+		t.Errorf("with mipmaps the minified checker varies by %d, want an even gray (at most 4)", s)
+	}
+	if s := spread(WithMipmaps(false)); s < 12 {
+		t.Errorf("without mipmaps the minified checker varies by only %d, want visible moire (at least 12)", s)
+	}
+}

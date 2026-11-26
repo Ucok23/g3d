@@ -48,6 +48,10 @@ type Texture struct {
 	wrapU, wrapV  TextureWrap
 	mag, min      TextureFilter
 	colorSpace    ColorSpace
+	noMipmaps     bool          // the zero value builds a full mip chain
+	mipFilter     TextureFilter // how the sampler blends between mip levels
+	lodMin        float32
+	lodMax        float32 // 0 means no upper limit
 }
 
 // TextureOption configures a Texture.
@@ -62,6 +66,26 @@ func WithWrap(u, v TextureWrap) TextureOption {
 // The default is FilterLinear for both.
 func WithFilter(mag, minification TextureFilter) TextureOption {
 	return func(t *Texture) { t.mag, t.min = mag, minification }
+}
+
+// WithMipmaps turns the mip chain on or off. It is on by default: the renderer builds every level down to 1x1, which
+// a GPU sampler uses for surfaces far from the camera so that they do not shimmer. Turn it off for textures that are
+// always drawn near their size (a user interface, pixel art) to save the third of the memory the chain takes.
+func WithMipmaps(on bool) TextureOption {
+	return func(t *Texture) { t.noMipmaps = !on }
+}
+
+// WithMipmapFilter sets how the sampler blends between two mip levels: FilterLinear (the default, trilinear
+// filtering) or FilterNearest (the nearest level only).
+func WithMipmapFilter(f TextureFilter) TextureOption {
+	return func(t *Texture) { t.mipFilter = f }
+}
+
+// WithLODRange limits the mip levels the sampler reads to min..max (a level of detail is a mip level, 0 being the full
+// size). A max of 0 means no limit. An advanced control: with min = 2 the texture is always read from its third level,
+// however near it is drawn.
+func WithLODRange(minLevel, maxLevel float32) TextureOption {
+	return func(t *Texture) { t.lodMin, t.lodMax = minLevel, maxLevel }
 }
 
 // WithColorSpace sets how the texels are encoded: ColorSpaceSRGB (the default) for color images, ColorSpaceLinear
@@ -112,6 +136,15 @@ func (t *Texture) Pixels() []byte { return t.pixels }
 
 // Wrap returns the address modes along u and v.
 func (t *Texture) Wrap() (u, v TextureWrap) { return t.wrapU, t.wrapV }
+
+// Mipmaps reports whether the renderer builds a mip chain for the texture.
+func (t *Texture) Mipmaps() bool { return !t.noMipmaps }
+
+// MipmapFilter returns how the sampler blends between mip levels.
+func (t *Texture) MipmapFilter() TextureFilter { return t.mipFilter }
+
+// LODRange returns the limits of the mip levels the sampler reads (a max of 0 means no limit).
+func (t *Texture) LODRange() (minLevel, maxLevel float32) { return t.lodMin, t.lodMax }
 
 // ColorSpace returns how the texels are encoded.
 func (t *Texture) ColorSpace() ColorSpace { return t.colorSpace }

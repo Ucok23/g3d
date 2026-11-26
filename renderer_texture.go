@@ -47,45 +47,65 @@ func filterMode(f TextureFilter) gputypes.FilterMode {
 	return gputypes.FilterModeLinear
 }
 
-// uploadTexture creates the GPU texture and sampler for t and writes its pixels.
-// format is RGBA8Unorm (read as stored) or RGBA8UnormSrgb (decoded to linear by the GPU, and filtered in linear space).
-func uploadTexture(device *wgpu.Device, queue *wgpu.Queue, label string, format gputypes.TextureFormat, w, h int, pixels []byte, wrapU, wrapV TextureWrap, mag, minification TextureFilter) (*gpuTexture, error) {
-	size := wgpu.Extent3D{Width: uint32(w), Height: uint32(h), DepthOrArrayLayers: 1} //nolint:gosec // G115: Texture sizes are limited to 8192
+// textureUpload describes what to put on the GPU for one texture.
+type textureUpload struct {
+	label        string
+	format       gputypes.TextureFormat // RGBA8Unorm (read as stored) or RGBA8UnormSrgb (decoded to linear by the GPU, filtered in linear space)
+	width        int
+	height       int
+	levels       [][]byte // RGBA8 pixels of every mip level, the full size first
+	wrapU, wrapV TextureWrap
+	mag, min     TextureFilter
+	mipFilter    TextureFilter
+	lodMin       float32
+	lodMax       float32 // 0: no upper limit
+}
+
+// uploadTexture creates the GPU texture and sampler and writes every mip level.
+func uploadTexture(device *wgpu.Device, queue *wgpu.Queue, d *textureUpload) (*gpuTexture, error) {
+	size := wgpu.Extent3D{Width: uint32(d.width), Height: uint32(d.height), DepthOrArrayLayers: 1} //nolint:gosec // G115: Texture sizes are limited to 8192
 	tex, err := device.CreateTexture(&wgpu.TextureDescriptor{
-		Label:         label,
+		Label:         d.label,
 		Size:          size,
-		MipLevelCount: 1,
+		MipLevelCount: uint32(len(d.levels)), //nolint:gosec // G115: at most 14 levels
 		SampleCount:   1,
 		Dimension:     gputypes.TextureDimension2D,
-		Format:        format,
+		Format:        d.format,
 		Usage:         gputypes.TextureUsageTextureBinding | gputypes.TextureUsageCopyDst,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create texture: %w", err)
 	}
 	g := &gpuTexture{tex: tex}
-	err = queue.WriteTexture(
-		&wgpu.ImageCopyTexture{Texture: tex},
-		pixels,
-		&wgpu.ImageDataLayout{BytesPerRow: uint32(w) * 4, RowsPerImage: uint32(h)}, //nolint:gosec // G115: Texture sizes are limited to 8192
-		&size,
-	)
-	if err != nil {
-		g.release()
-		return nil, fmt.Errorf("write texture: %w", err)
+	lw, lh := d.width, d.height
+	for level, pixels := range d.levels {
+		ext := wgpu.Extent3D{Width: uint32(lw), Height: uint32(lh), DepthOrArrayLayers: 1} //nolint:gosec // G115: Texture sizes are limited to 8192
+		err = queue.WriteTexture(
+			&wgpu.ImageCopyTexture{Texture: tex, MipLevel: uint32(level)},
+			pixels,
+			&wgpu.ImageDataLayout{BytesPerRow: uint32(lw) * 4, RowsPerImage: uint32(lh)}, //nolint:gosec // G115: Texture sizes are limited to 8192
+			&ext,
+		)
+		if err != nil {
+			g.release()
+			return nil, fmt.Errorf("write texture level %d: %w", level, err)
+		}
+		lw, lh = max(lw/2, 1), max(lh/2, 1)
 	}
 	if g.view, err = device.CreateTextureView(tex, nil); err != nil {
 		g.release()
 		return nil, fmt.Errorf("create texture view: %w", err)
 	}
 	g.sampler, err = device.CreateSampler(&wgpu.SamplerDescriptor{
-		Label:        label + "_sampler",
-		AddressModeU: addressMode(wrapU),
-		AddressModeV: addressMode(wrapV),
+		Label:        d.label + "_sampler",
+		AddressModeU: addressMode(d.wrapU),
+		AddressModeV: addressMode(d.wrapV),
 		AddressModeW: gputypes.AddressModeClampToEdge,
-		MagFilter:    filterMode(mag),
-		MinFilter:    filterMode(minification),
-		MipmapFilter: gputypes.FilterModeNearest, // one mip level for now
+		MagFilter:    filterMode(d.mag),
+		MinFilter:    filterMode(d.min),
+		MipmapFilter: filterMode(d.mipFilter),
+		LodMinClamp:  d.lodMin,
+		LodMaxClamp:  d.lodMax,
 	})
 	if err != nil {
 		g.release()
@@ -99,7 +119,17 @@ func (r *Renderer) ensureTexture(device *wgpu.Device, queue *wgpu.Queue, t *Text
 	if g, ok := r.textures[t]; ok {
 		return g, nil
 	}
-	g, err := uploadTexture(device, queue, "g3d_texture", r.textureFormat(t.colorSpace), t.width, t.height, t.pixels, t.wrapU, t.wrapV, t.mag, t.min)
+	levels := [][]byte{t.pixels}
+	if !t.noMipmaps {
+		// With color management the GPU decodes an sRGB texture before it filters, so the levels are averaged in
+		// linear light to match; otherwise the stored values are averaged as they are.
+		linear := r.colorManagement == ColorManagementSRGB && t.colorSpace == ColorSpaceSRGB
+		levels = append(levels, generateMips(t.pixels, t.width, t.height, linear)...)
+	}
+	g, err := uploadTexture(device, queue, &textureUpload{
+		label: "g3d_texture", format: r.textureFormat(t.colorSpace), width: t.width, height: t.height, levels: levels,
+		wrapU: t.wrapU, wrapV: t.wrapV, mag: t.mag, min: t.min, mipFilter: t.mipFilter, lodMin: t.lodMin, lodMax: t.lodMax,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +146,10 @@ func (r *Renderer) whiteTexture(device *wgpu.Device, queue *wgpu.Queue) (*gpuTex
 	if r.defaultTexture != nil {
 		return r.defaultTexture, nil
 	}
-	g, err := uploadTexture(device, queue, "g3d_white", gputypes.TextureFormatRGBA8Unorm, 1, 1, []byte{255, 255, 255, 255}, WrapClamp, WrapClamp, FilterLinear, FilterLinear)
+	g, err := uploadTexture(device, queue, &textureUpload{
+		label: "g3d_white", format: gputypes.TextureFormatRGBA8Unorm, width: 1, height: 1, levels: [][]byte{{255, 255, 255, 255}},
+		wrapU: WrapClamp, wrapV: WrapClamp, mag: FilterLinear, min: FilterLinear, mipFilter: FilterNearest,
+	})
 	if err != nil {
 		return nil, err
 	}
