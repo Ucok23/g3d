@@ -362,6 +362,18 @@ func TestStandardMaterialUniformDataLayout(t *testing.T) {
 	}
 }
 
+func TestStandardMaterialUniformDataFlagsADoubleSidedMaterial(t *testing.T) {
+	flag := func(m *StandardMaterial) float32 {
+		return math.Float32frombits(binary.LittleEndian.Uint32(m.UniformData()[28:32]))
+	}
+	if got := flag(NewStandardMaterial()); got != 0 {
+		t.Errorf("single-sided flag = %v, want 0", got)
+	}
+	if got := flag(NewStandardMaterial(WithDoubleSided(true))); got != 1 {
+		t.Errorf("double-sided flag = %v, want 1", got)
+	}
+}
+
 func TestStandardMaterialUniformDataDefaults(t *testing.T) {
 	m := NewStandardMaterial()
 	data := m.UniformData()
