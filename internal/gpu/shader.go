@@ -18,10 +18,14 @@ var basicShaderSource string
 //go:embed shaders/standard.wgsl
 var standardShaderSource string
 
+//go:embed shaders/shadow.wgsl
+var shadowShaderSource string
+
 // Shader ID constants used for pipeline keying.
 const (
 	ShaderBasic    = "basic"
 	ShaderStandard = "standard"
+	ShaderShadow   = "shadow"
 )
 
 // ShaderCache compiles and caches WGSL shader modules. Modules are compiled
@@ -42,6 +46,7 @@ func NewShaderCache(device *wgpu.Device) (*ShaderCache, error) {
 	shaders := map[string]string{
 		ShaderBasic:    basicShaderSource,
 		ShaderStandard: standardShaderSource,
+		ShaderShadow:   shadowShaderSource,
 	}
 
 	for name, source := range shaders {

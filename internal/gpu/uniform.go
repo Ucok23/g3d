@@ -7,8 +7,11 @@ import (
 
 // Uniform buffer sizes must match WGSL struct layouts byte-for-byte.
 const (
-	// FrameUniformsSize is the byte size of the FrameUniforms struct (224 bytes).
-	FrameUniformsSize = 224
+	// FrameUniformsSize is the byte size of the FrameUniforms struct (304 bytes).
+	FrameUniformsSize = 304
+
+	// ShadowFrameUniformsSize is the byte size of ShadowFrameUniforms (64 bytes, 1 mat4x4).
+	ShadowFrameUniformsSize = 64
 
 	// ObjectUniformsSize is the byte size of the ObjectUniforms struct (128 bytes).
 	ObjectUniformsSize = 128
@@ -32,23 +35,27 @@ type LightData struct {
 }
 
 // FrameUniformsData holds per-frame data for GPU upload. Layout matches the
-// WGSL FrameUniforms struct (224 bytes total).
+// WGSL FrameUniforms struct (304 bytes total).
 //
-//	offset   0: ViewProjection [16]float32 (64 bytes)
-//	offset  64: CameraPosition [4]float32  (16 bytes — vec4, NOT vec3!)
-//	offset  80: Lights         [4]LightData (128 bytes)
-//	offset 208: LightCount     uint32       (4 bytes)
-//	offset 212: Flags          uint32       (4 bytes, see the frame flags of the renderer)
-//	offset 216: Exposure       float32      (4 bytes, tone-mapping exposure multiplier)
-//	offset 220: Pad            uint32       (4 bytes)
+//	offset   0: ViewProjection      [16]float32 (64 bytes)
+//	offset  64: CameraPosition      [4]float32  (16 bytes — vec4, NOT vec3!)
+//	offset  80: Lights              [4]LightData (128 bytes)
+//	offset 208: LightCount          uint32       (4 bytes)
+//	offset 212: Flags               uint32       (4 bytes, see the frame flags of the renderer)
+//	offset 216: Exposure            float32      (4 bytes, tone-mapping exposure multiplier)
+//	offset 220: Pad                 uint32       (4 bytes)
+//	offset 224: LightViewProjection [16]float32  (64 bytes, directional shadow matrix)
+//	offset 288: ShadowParams        [4]float32   (16 bytes: depthBias, normalBias, texelSize, shadowLightIdx+1)
 type FrameUniformsData struct {
-	ViewProjection [16]float32
-	CameraPosition [4]float32
-	Lights         [MaxLights]LightData
-	LightCount     uint32
-	Flags          uint32
-	Exposure       float32
-	Pad            uint32
+	ViewProjection      [16]float32
+	CameraPosition      [4]float32
+	Lights              [MaxLights]LightData
+	LightCount          uint32
+	Flags               uint32
+	Exposure            float32
+	Pad                 uint32
+	LightViewProjection [16]float32
+	ShadowParams        [4]float32
 }
 
 // ObjectUniformsData holds per-object data for GPU upload. Layout matches
@@ -105,8 +112,29 @@ func PackFrameUniforms(data *FrameUniformsData) []byte {
 
 	binary.LittleEndian.PutUint32(buf[212:216], data.Flags)
 	binary.LittleEndian.PutUint32(buf[216:220], math.Float32bits(data.Exposure))
-	// Pad: 4 bytes (zeroed) — buf is zero-initialized.
+	// Pad at [220:224] is zeroed.
 
+	// LightViewProjection: 64 bytes at [224:288]
+	off = 224
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(data.LightViewProjection[i]))
+		off += 4
+	}
+	// ShadowParams: 16 bytes at [288:304]
+	for i := 0; i < 4; i++ {
+		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(data.ShadowParams[i]))
+		off += 4
+	}
+
+	return buf
+}
+
+// PackMat4 encodes a single 4x4 matrix as 64 little-endian bytes.
+func PackMat4(m [16]float32) []byte {
+	buf := make([]byte, ShadowFrameUniformsSize)
+	for i := 0; i < 16; i++ {
+		binary.LittleEndian.PutUint32(buf[i*4:(i+1)*4], math.Float32bits(m[i]))
+	}
 	return buf
 }
 

@@ -75,6 +75,8 @@ type Renderer struct {
 	toneMapping     ToneMapping
 	exposure        float32
 
+	shadows shadowState
+
 	// Frame bind groups (group 0) — one per distinct pipeline used in a frame.
 	// Released at the start of the next frame, when the GPU has finished the
 	// previous command buffer (VSync guarantees this for swapchain-based rendering).
@@ -326,6 +328,12 @@ func (r *Renderer) recordFrame(
 	device := r.gpuState.Device()
 	queue := r.gpuState.Queue()
 
+	// Optional shadow pass populates LightViewProjection + ShadowParams before uploading frameData.
+	shadowView, shadowSampler, err := r.recordShadowPass(encoder, scene, frameData)
+	if err != nil {
+		return fmt.Errorf("g3d: shadow pass: %w", err)
+	}
+
 	// Update the persistent frame uniform buffer via queue.WriteBuffer().
 	// Buffer is created on first use and reused across frames.
 	frameBytes := gpu.PackFrameUniforms(frameData)
@@ -381,7 +389,7 @@ func (r *Renderer) recordFrame(
 
 	// Draw opaque bucket.
 	if drawErr := r.drawBucket(renderPass, r.renderList.Opaque(), device, queue,
-		&objPoolIdx); drawErr != nil {
+		shadowView, shadowSampler, &objPoolIdx); drawErr != nil {
 		_ = renderPass.End()
 		return fmt.Errorf("g3d: draw opaque: %w", drawErr)
 	}
@@ -399,6 +407,8 @@ func (r *Renderer) drawBucket(
 	calls []render.DrawCall,
 	device *wgpu.Device,
 	queue *wgpu.Queue,
+	shadowView *wgpu.TextureView,
+	shadowSampler *wgpu.Sampler,
 	objPoolIdx *int,
 ) error {
 	var currentPipelineKey gpu.PipelineKey
@@ -432,12 +442,19 @@ func (r *Renderer) drawBucket(
 
 			// Create frame bind group for this pipeline's layout.
 			// Frame bind groups are deferred-released at the start of the next frame.
+			frameEntries := []wgpu.BindGroupEntry{
+				{Binding: 0, Buffer: r.frameUniformBuf, Size: gpu.FrameUniformsSize},
+			}
+			if pipeKey.ShaderID == gpu.ShaderStandard {
+				frameEntries = append(frameEntries,
+					wgpu.BindGroupEntry{Binding: 1, TextureView: shadowView},
+					wgpu.BindGroupEntry{Binding: 2, Sampler: shadowSampler},
+				)
+			}
 			fbg, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-				Label:  "g3d_frame_bg",
-				Layout: bundle.FrameLayout,
-				Entries: []wgpu.BindGroupEntry{
-					{Binding: 0, Buffer: r.frameUniformBuf, Size: gpu.FrameUniformsSize},
-				},
+				Label:   "g3d_frame_bg",
+				Layout:  bundle.FrameLayout,
+				Entries: frameEntries,
 			})
 			if err != nil {
 				return fmt.Errorf("create frame bind group: %w", err)
@@ -734,6 +751,8 @@ func (r *Renderer) releasePendingBindGroups() {
 		bg.Release()
 	}
 	r.frameBindGroups = r.frameBindGroups[:0]
+
+	r.releaseShadowPendingBindGroups()
 }
 
 // releasePersistentResources frees all persistent GPU resources owned by the
@@ -786,6 +805,7 @@ func (r *Renderer) releasePersistentResources() {
 	r.geomIdxCounts = nil
 
 	r.releaseTextures()
+	r.releaseShadows()
 }
 
 // createVertexBuffer creates a vertex buffer from geometry data using

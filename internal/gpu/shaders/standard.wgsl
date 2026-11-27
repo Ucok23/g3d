@@ -21,14 +21,16 @@ struct LightData {
 };                           // Total: 32 bytes, 16-byte aligned
 
 struct FrameUniforms {
-    view_projection: mat4x4<f32>,    //  64 bytes (offset   0)
-    camera_position: vec4<f32>,      //  16 bytes (offset  64) — vec4, NOT vec3!
-    lights: array<LightData, 4>,     // 128 bytes (offset  80) — 4 x 32
-    light_count: u32,                //   4 bytes (offset 208)
-    flags: u32,                      //   4 bytes (offset 212) — FLAG_MANAGED | FLAG_ENCODE_OUTPUT | FLAG_TONEMAP_*
-    exposure: f32,                   //   4 bytes (offset 216) — tone-mapping exposure multiplier
-    _pad2: u32,                      //   4 bytes (offset 220)
-};                                   // Total: 224 bytes, 16-byte aligned
+    view_projection: mat4x4<f32>,       //  64 bytes (offset   0)
+    camera_position: vec4<f32>,         //  16 bytes (offset  64) — vec4, NOT vec3!
+    lights: array<LightData, 4>,        // 128 bytes (offset  80) — 4 x 32
+    light_count: u32,                   //   4 bytes (offset 208)
+    flags: u32,                         //   4 bytes (offset 212) — FLAG_MANAGED | FLAG_ENCODE_OUTPUT | FLAG_TONEMAP_*
+    exposure: f32,                      //   4 bytes (offset 216) — tone-mapping exposure multiplier
+    _pad2: u32,                         //   4 bytes (offset 220)
+    light_view_projection: mat4x4<f32>, //  64 bytes (offset 224) — directional shadow matrix
+    shadow_params: vec4<f32>,           //  16 bytes (offset 288) — x=depthBias, y=normalBias, z=texelSize, w=lightIdx+1
+};                                      // Total: 304 bytes, 16-byte aligned
 
 struct ObjectUniforms {
     model: mat4x4<f32>,              // 64 bytes (offset  0)
@@ -47,6 +49,8 @@ struct MaterialUniforms {
 // --- Bind groups ---
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
+@group(0) @binding(1) var shadow_map: texture_depth_2d;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var<uniform> object: ObjectUniforms;
 @group(1) @binding(1) var<uniform> material: MaterialUniforms;
 @group(1) @binding(2) var color_map: texture_2d<f32>;
@@ -129,6 +133,35 @@ fn tonemap_aces(c: vec3<f32>) -> vec3<f32> {
 }
 
 
+// 3x3 PCF directional shadow visibility (1.0 = lit, 0.0 = fully occluded).
+fn sample_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
+    if frame.shadow_params.w < 0.5 {
+        return 1.0;
+    }
+    let ndotl = max(dot(world_normal, light_dir), 0.0);
+    let normal_offset = frame.shadow_params.y * (1.0 - 0.5 * ndotl);
+    let pos_biased = world_pos + world_normal * normal_offset;
+    let ls = frame.light_view_projection * vec4<f32>(pos_biased, 1.0);
+    if abs(ls.w) < 1e-6 {
+        return 1.0;
+    }
+    let proj = ls.xyz / ls.w;
+    let uv = vec2<f32>(proj.x * 0.5 + 0.5, 0.5 - proj.y * 0.5);
+    if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || proj.z < 0.0 || proj.z > 1.0 {
+        return 1.0;
+    }
+    let depth = proj.z - frame.shadow_params.x;
+    let texel = frame.shadow_params.z;
+    var sum = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let offset = vec2<f32>(f32(x) * texel, f32(y) * texel);
+            sum = sum + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, depth);
+        }
+    }
+    return sum / 9.0;
+}
+
 // Light type constants (must match Go LightKind values).
 const LIGHT_AMBIENT: u32 = 0u;
 const LIGHT_DIRECTIONAL: u32 = 1u;
@@ -188,7 +221,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let diffuse = base_color * NdotL;
             let specular = vec3<f32>(pow(NdotH, shininess)) * specular_strength;
 
-            result = result + (diffuse + specular) * light_color;
+            var vis = 1.0;
+            if frame.shadow_params.w > 0.5 && (i + 1u) == u32(frame.shadow_params.w) {
+                vis = sample_shadow(in.world_position, N, L);
+            }
+            result = result + (diffuse + specular) * light_color * vis;
         }
     }
 

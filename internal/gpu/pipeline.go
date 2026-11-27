@@ -80,16 +80,35 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 		materialUniformSize = 48
 	}
 
-	// Group 0: per-frame uniforms (FrameUniforms, 224 bytes).
-	frameLayout, err := c.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Label: "g3d_frame_layout_" + key.ShaderID,
-		Entries: []gputypes.BindGroupLayoutEntry{
-			{
-				Binding:    0,
-				Visibility: gputypes.ShaderStageVertex | gputypes.ShaderStageFragment,
-				Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: FrameUniformsSize},
-			},
+	// Group 0: per-frame uniforms (FrameUniforms, 304 bytes).
+	// StandardMaterial also binds the directional shadow depth map (binding 1) and comparison sampler (binding 2).
+	frameEntries := []gputypes.BindGroupLayoutEntry{
+		{
+			Binding:    0,
+			Visibility: gputypes.ShaderStageVertex | gputypes.ShaderStageFragment,
+			Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: FrameUniformsSize},
 		},
+	}
+	if key.ShaderID == ShaderStandard {
+		frameEntries = append(frameEntries,
+			gputypes.BindGroupLayoutEntry{
+				Binding:    1,
+				Visibility: gputypes.ShaderStageFragment,
+				Texture: &gputypes.TextureBindingLayout{
+					SampleType:    gputypes.TextureSampleTypeDepth,
+					ViewDimension: gputypes.TextureViewDimension2D,
+				},
+			},
+			gputypes.BindGroupLayoutEntry{
+				Binding:    2,
+				Visibility: gputypes.ShaderStageFragment,
+				Sampler:    &gputypes.SamplerBindingLayout{Type: gputypes.SamplerBindingTypeComparison},
+			},
+		)
+	}
+	frameLayout, err := c.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label:   "g3d_frame_layout_" + key.ShaderID,
+		Entries: frameEntries,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("g3d: create frame bind group layout: %w", err)
@@ -176,6 +195,89 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 		ObjectLayout:   objectLayout,
 		PipelineLayout: pipeLayout,
 	}, nil
+}
+
+// ShadowPipeline returns the cached depth-only shadow render pipeline for the given culling mode.
+func (c *PipelineCache) ShadowPipeline(doubleSided bool) (*PipelineBundle, error) {
+	key := PipelineKey{
+		ShaderID:      ShaderShadow,
+		SurfaceFormat: gputypes.TextureFormatUndefined,
+		DepthFormat:   gputypes.TextureFormatDepth32Float,
+		DoubleSided:   doubleSided,
+		SampleCount:   1,
+	}
+	if bundle, ok := c.cache[key]; ok {
+		return bundle, nil
+	}
+	shader := c.shaders.Get(ShaderShadow)
+	if shader == nil {
+		return nil, fmt.Errorf("g3d: shadow shader not compiled")
+	}
+	frameLayout, err := c.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label: "g3d_shadow_frame_layout",
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: gputypes.ShaderStageVertex,
+				Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: ShadowFrameUniformsSize},
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("g3d: create shadow frame layout: %w", err)
+	}
+	objectLayout, err := c.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label: "g3d_shadow_object_layout",
+		Entries: []gputypes.BindGroupLayoutEntry{
+			{
+				Binding:    0,
+				Visibility: gputypes.ShaderStageVertex,
+				Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: ObjectUniformsSize},
+			},
+		},
+	})
+	if err != nil {
+		frameLayout.Release()
+		return nil, fmt.Errorf("g3d: create shadow object layout: %w", err)
+	}
+	pipeLayout, err := c.device.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
+		Label:            "g3d_shadow_pipe_layout",
+		BindGroupLayouts: []*wgpu.BindGroupLayout{frameLayout, objectLayout},
+	})
+	if err != nil {
+		objectLayout.Release()
+		frameLayout.Release()
+		return nil, fmt.Errorf("g3d: create shadow pipeline layout: %w", err)
+	}
+	ds := OpaqueDepthStencil(gputypes.TextureFormatDepth32Float)
+	ds.DepthBias = 2
+	ds.DepthBiasSlopeScale = 2.0
+	pipeline, err := c.device.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
+		Label:  "g3d_shadow_pipeline",
+		Layout: pipeLayout,
+		Vertex: wgpu.VertexState{
+			Module:     shader,
+			EntryPoint: shaderEntryVS,
+			Buffers:    StandardVertexLayout(),
+		},
+		Primitive:    DefaultPrimitive(doubleSided),
+		DepthStencil: ds,
+		Multisample:  NoMultisample(),
+	})
+	if err != nil {
+		pipeLayout.Release()
+		objectLayout.Release()
+		frameLayout.Release()
+		return nil, fmt.Errorf("g3d: create shadow pipeline: %w", err)
+	}
+	bundle := &PipelineBundle{
+		Pipeline:       pipeline,
+		FrameLayout:    frameLayout,
+		ObjectLayout:   objectLayout,
+		PipelineLayout: pipeLayout,
+	}
+	c.cache[key] = bundle
+	return bundle, nil
 }
 
 // Close releases all cached pipelines and layouts in reverse creation order.
