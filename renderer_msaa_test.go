@@ -23,7 +23,7 @@ func TestSetSampleCountValidationAndSoftwareFallback(t *testing.T) {
 	if got := renderer.SampleCount(); got != 1 {
 		t.Fatalf("default SampleCount = %d, want 1", got)
 	}
-	for _, bad := range []uint32{0, 2, 3, 8, 16} {
+	for _, bad := range []uint32{0, 2, 3, 5, 16} {
 		if err := renderer.SetSampleCount(bad); err == nil {
 			t.Errorf("SetSampleCount(%d) succeeded, want error", bad)
 		}
@@ -77,6 +77,9 @@ func TestMSAA4xSmoothsDiagonalEdgeOnVulkan(t *testing.T) {
 		defer r.Release()
 		r.SetSize(size, size)
 		if err := r.SetSampleCount(samples); err != nil {
+			if samples == 8 {
+				return nil // 8x is adapter-dependent; callers fall back to 4x
+			}
 			t.Fatalf("SetSampleCount(%d): %v", samples, err)
 		}
 		scene := NewScene()
@@ -131,6 +134,7 @@ func TestMSAA4xSmoothsDiagonalEdgeOnVulkan(t *testing.T) {
 
 	px1 := renderWithSamples(1)
 	px4 := renderWithSamples(4)
+	px8 := renderWithSamples(8)
 
 	countBlended := func(px []byte) int {
 		n := 0
@@ -147,5 +151,12 @@ func TestMSAA4xSmoothsDiagonalEdgeOnVulkan(t *testing.T) {
 	}
 	if b4 < 20 {
 		t.Errorf("4x MSAA render had only %d intermediate edge pixels, want >= 20", b4)
+	}
+	if px8 == nil {
+		t.Log("8x MSAA not supported by this adapter (callers fall back to 4x)")
+	} else if b8 := countBlended(px8); b8 < 20 {
+		t.Errorf("8x MSAA render had only %d intermediate edge pixels, want >= 20", b8)
+	} else {
+		t.Logf("8x MSAA supported: %d intermediate edge pixels (4x: %d)", b8, b4)
 	}
 }

@@ -182,3 +182,53 @@ func TestDirectionalShadowCastsOnVulkanGPU(t *testing.T) {
 		t.Fatalf("Vulkan expected clear shadow footprint on floor, got darkCount=%d maxDrop=%d", darkCount, maxDrop)
 	}
 }
+
+func TestSoftShadowOnSoftwareBackend(t *testing.T) {
+	const size uint32 = 64
+	renderScene := func(shadows bool, softness float32) []byte {
+		provider := newSoftwareProvider(t, gputypes.TextureFormatRGBA8Unorm)
+		r, err := NewRenderer(provider)
+		if err != nil {
+			t.Fatalf("NewRenderer: %v", err)
+		}
+		defer r.Release()
+		r.SetColorManagement(ColorManagementSRGB)
+		r.SetShadowsEnabled(shadows)
+		r.SetShadowMapSize(1024)
+		r.SetShadowSoftness(softness)
+		r.SetSize(size, size)
+
+		scene, cam := shadowTestScene()
+		return renderSoftwareRGBA8(t, provider, r, scene, cam, size)
+	}
+	partial := func(unshadowed, img []byte) int {
+		n := 0
+		for y := uint32(0); y < size; y++ {
+			for x := uint32(0); x < size; x++ {
+				u := pixelAt(unshadowed, size, x, y)
+				if u[0] != u[1] || u[1] != u[2] || u[0] < 150 {
+					continue // floor only: skip the red caster and the background
+				}
+				drop := int(u[0]) - int(pixelAt(img, size, x, y)[0])
+				if drop > 8 && drop < 55 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+
+	unshadowed := renderScene(false, 0)
+	hard := renderScene(true, 0)
+	soft := renderScene(true, 0.05)
+
+	darkCount, maxDrop, _, _, _ := countDarkenedPixels(unshadowed, soft)
+	if darkCount < 25 || maxDrop < 50 {
+		t.Fatalf("soft shadow lost its footprint: darkCount=%d maxDrop=%d", darkCount, maxDrop)
+	}
+	ph, ps := partial(unshadowed, hard), partial(unshadowed, soft)
+	t.Logf("partially shadowed pixels: hard=%d soft=%d", ph, ps)
+	if ps <= ph {
+		t.Fatalf("soft shadow should have a wider penumbra than 3x3 PCF: soft=%d hard=%d", ps, ph)
+	}
+}

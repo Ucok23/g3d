@@ -15,13 +15,14 @@ func (r *Renderer) effectiveSampleCount() uint32 {
 	return r.sampleCount
 }
 
-// SampleCount returns the configured MSAA sample count (1 = disabled, 4 = 4x MSAA).
+// SampleCount returns the configured MSAA sample count (1 = disabled, 4 = 4x, 8 = 8x MSAA).
 func (r *Renderer) SampleCount() uint32 {
 	return r.effectiveSampleCount()
 }
 
 // SetSampleCount configures multisample anti-aliasing (MSAA) for the renderer.
-// WebGPU guarantees support for sample counts 1 (disabled, default) and 4 (4x MSAA).
+// WebGPU guarantees support for sample counts 1 (disabled, default) and 4 (4x MSAA); 8x is
+// accepted too but depends on the adapter, so callers should fall back to 4 when it errors.
 // When sample count is 4, the renderer draws into an internal multisampled color
 // and depth buffer and resolves into the single-sample target view passed to Render.
 //
@@ -29,8 +30,8 @@ func (r *Renderer) SampleCount() uint32 {
 // wgpu's software backend), SetSampleCount restores the previous sample count
 // and returns an error.
 func (r *Renderer) SetSampleCount(count uint32) error {
-	if count != 1 && count != 4 {
-		return fmt.Errorf("g3d: unsupported MSAA sample count %d (supported: 1, 4)", count)
+	if count != 1 && count != 4 && count != 8 {
+		return fmt.Errorf("g3d: unsupported MSAA sample count %d (supported: 1, 4, 8)", count)
 	}
 	if count == r.effectiveSampleCount() {
 		return nil

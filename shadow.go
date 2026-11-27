@@ -22,6 +22,7 @@ type shadowState struct {
 	mapSize    uint32
 	bias       float32
 	normalBias float32
+	softness   float32 // tan of the light's angular radius; 0 = fixed 3x3 PCF
 
 	texture      *wgpu.Texture
 	view         *wgpu.TextureView
@@ -33,11 +34,11 @@ type shadowState struct {
 
 	sampler *wgpu.Sampler
 
-	frameUniformBuf    *wgpu.Buffer
-	frameBindGroups    []*wgpu.BindGroup
-	objectUniformBufs  []*wgpu.Buffer
-	objectBindGroups   []*wgpu.BindGroup
-	pendingBindGroups  []*wgpu.BindGroup
+	frameUniformBuf   *wgpu.Buffer
+	frameBindGroups   []*wgpu.BindGroup
+	objectUniformBufs []*wgpu.Buffer
+	objectBindGroups  []*wgpu.BindGroup
+	pendingBindGroups []*wgpu.BindGroup
 }
 
 // SetShadowsEnabled turns directional shadow mapping on or off (default: false).
@@ -70,6 +71,24 @@ func (r *Renderer) ShadowMapSize() uint32 {
 	}
 	return r.shadows.mapSize
 }
+
+// SetShadowSoftness enables contact-hardening (PCSS-style) soft shadows for the directional light.
+// softness is tan(angular radius of the light): the penumbra grows by 2*softness meters per meter
+// between receiver and occluder (the real sun is ~0.0047; ~0.015 is a pleasant architectural look).
+// 0 (default) keeps the fixed 3x3 PCF kernel, which is also what the software backend uses.
+// Values are clamped to [0..0.1].
+func (r *Renderer) SetShadowSoftness(softness float32) {
+	if softness < 0 {
+		softness = 0
+	}
+	if softness > 0.1 {
+		softness = 0.1
+	}
+	r.shadows.softness = softness
+}
+
+// ShadowSoftness returns the configured light softness (0 = fixed 3x3 PCF).
+func (r *Renderer) ShadowSoftness() float32 { return r.shadows.softness }
 
 // SetShadowBias sets the depth comparison bias used to prevent shadow acne (default 0.0012).
 func (r *Renderer) SetShadowBias(bias float32) {
@@ -247,6 +266,7 @@ func (r *Renderer) recordShadowPass(
 
 	if !r.shadows.enabled {
 		frameData.ShadowParams = [4]float32{}
+		frameData.ShadowSoft = [4]float32{}
 		dummy, err := r.ensureDummyShadowTexture(device, encoder)
 		return dummy, sampler, err
 	}
@@ -264,6 +284,7 @@ func (r *Renderer) recordShadowPass(
 	}
 	if dirIdx < 0 {
 		frameData.ShadowParams = [4]float32{}
+		frameData.ShadowSoft = [4]float32{}
 		dummy, err := r.ensureDummyShadowTexture(device, encoder)
 		return dummy, sampler, err
 	}
@@ -291,6 +312,7 @@ func (r *Renderer) recordShadowPass(
 	})
 	if len(casters) == 0 || !hasBox {
 		frameData.ShadowParams = [4]float32{}
+		frameData.ShadowSoft = [4]float32{}
 		dummy, err := r.ensureDummyShadowTexture(device, encoder)
 		return dummy, sampler, err
 	}
@@ -303,7 +325,7 @@ func (r *Renderer) recordShadowPass(
 		return nil, nil, fmt.Errorf("g3d: shadow frame buffer: %w", err)
 	}
 
-	lightVP := computeDirectionalShadowMatrix(sceneBox, lightDir, dim)
+	lightVP, worldWidth, worldHeight, depthRange := computeDirectionalShadowMatrix(sceneBox, lightDir, dim)
 	if err := queue.WriteBuffer(r.shadows.frameUniformBuf, 0, gpu.PackMat4([16]float32(lightVP))); err != nil {
 		return nil, nil, fmt.Errorf("g3d: write shadow frame uniforms: %w", err)
 	}
@@ -315,6 +337,7 @@ func (r *Renderer) recordShadowPass(
 		1.0 / float32(dim),
 		float32(dirIdx + 1),
 	}
+	frameData.ShadowSoft = [4]float32{worldWidth, depthRange, r.shadows.softness, worldHeight}
 
 	rp, err := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label: "g3d_shadow",
@@ -425,7 +448,7 @@ func (r *Renderer) recordShadowPass(
 }
 
 // computeDirectionalShadowMatrix fits a tight texel-snapped WebGPU orthographic projection around sceneBox.
-func computeDirectionalShadowMatrix(box AABB, lightDir Vec3, mapSize uint32) Mat4 {
+func computeDirectionalShadowMatrix(box AABB, lightDir Vec3, mapSize uint32) (Mat4, float32, float32, float32) {
 	center := box.Center()
 	size := box.Size()
 	radius := size.Length() * 0.5
@@ -504,7 +527,7 @@ func computeDirectionalShadowMatrix(box AABB, lightDir Vec3, mapSize uint32) Mat
 		far = near + 1.0
 	}
 	proj := Mat4Ortho(minX, maxX, minY, maxY, near, far)
-	return proj.Mul(view)
+	return proj.Mul(view), maxX - minX, maxY - minY, far - near
 }
 
 func (r *Renderer) releaseShadowPendingBindGroups() {

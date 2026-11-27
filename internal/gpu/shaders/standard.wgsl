@@ -30,7 +30,8 @@ struct FrameUniforms {
     _pad2: u32,                         //   4 bytes (offset 220)
     light_view_projection: mat4x4<f32>, //  64 bytes (offset 224) — directional shadow matrix
     shadow_params: vec4<f32>,           //  16 bytes (offset 288) — x=depthBias, y=normalBias, z=texelSize, w=lightIdx+1
-};                                      // Total: 304 bytes, 16-byte aligned
+    shadow_soft: vec4<f32>,             //  16 bytes (offset 304) — x=mapWorldWidth, y=depthRangeWorld, z=softness tan(angular radius), w=mapWorldHeight
+};                                      // Total: 320 bytes, 16-byte aligned
 
 struct ObjectUniforms {
     model: mat4x4<f32>,              // 64 bytes (offset  0)
@@ -179,8 +180,29 @@ fn perturb_normal(N: vec3<f32>, world_pos: vec3<f32>, uv: vec2<f32>, map_n: vec3
     return normalize(T * tx + B * ty + N * tz);
 }
 
-// 3x3 PCF directional shadow visibility (1.0 = lit, 0.0 = fully occluded).
-fn sample_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
+// 16-tap Poisson disk (unit radius) used by the soft-shadow blocker search and filter.
+const POISSON_COUNT: i32 = 16;
+var<private> POISSON: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
+    vec2<f32>(-0.94201624, -0.39906216), vec2<f32>(0.94558609, -0.76890725),
+    vec2<f32>(-0.09418410, -0.92938870), vec2<f32>(0.34495938, 0.29387760),
+    vec2<f32>(-0.91588581, 0.45771432), vec2<f32>(-0.81544232, -0.87912464),
+    vec2<f32>(-0.38277543, 0.27676845), vec2<f32>(0.97484398, 0.75648379),
+    vec2<f32>(0.44323325, -0.97511554), vec2<f32>(0.53742981, -0.47373420),
+    vec2<f32>(-0.26496911, -0.41893023), vec2<f32>(0.79197514, 0.19090188),
+    vec2<f32>(-0.24188840, 0.99706507), vec2<f32>(-0.81409955, 0.91437590),
+    vec2<f32>(0.19984126, 0.78641367), vec2<f32>(0.14383161, -0.14100790)
+);
+
+// Interleaved gradient noise in [0,1): decorrelates the kernel rotation between neighbouring pixels.
+fn interleaved_gradient_noise(p: vec2<f32>) -> f32 {
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+}
+
+// Directional shadow visibility (1.0 = lit, 0.0 = fully occluded).
+// shadow_soft.z == 0: fixed 3x3 PCF. Otherwise contact-hardening PCSS: a blocker search finds the
+// mean occluder depth, the penumbra width follows from the receiver-occluder distance, and a
+// rotated Poisson PCF of that radius filters the map.
+fn sample_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, light_dir: vec3<f32>, frag_xy: vec2<f32>) -> f32 {
     if frame.shadow_params.w < 0.5 {
         return 1.0;
     }
@@ -198,14 +220,67 @@ fn sample_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, light_dir: vec3<
     }
     let depth = proj.z - frame.shadow_params.x;
     let texel = frame.shadow_params.z;
-    var sum = 0.0;
-    for (var y = -1; y <= 1; y = y + 1) {
-        for (var x = -1; x <= 1; x = x + 1) {
-            let offset = vec2<f32>(f32(x) * texel, f32(y) * texel);
-            sum = sum + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, depth);
+    let softness = frame.shadow_soft.z;
+
+    if softness <= 0.0 {
+        var sum = 0.0;
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let offset = vec2<f32>(f32(x) * texel, f32(y) * texel);
+                sum = sum + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, depth);
+            }
+        }
+        return sum / 9.0;
+    }
+
+    let world_w = max(frame.shadow_soft.x, 1e-3);
+    let world_h = max(frame.shadow_soft.w, 1e-3);
+    let range = max(frame.shadow_soft.y, 1e-3);
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    // World meters -> shadow-map uv, per axis (the fitted projection need not be square).
+    let m2uv = vec2<f32>(1.0 / world_w, 1.0 / world_h);
+    let max_texels = 28.0;
+
+    // Per-pixel kernel rotation; with SSAA the noise averages out to a smooth penumbra.
+    let angle = 6.2831853 * interleaved_gradient_noise(frag_xy);
+    let rot = vec2<f32>(cos(angle), sin(angle));
+
+    // Blocker search over the largest penumbra an occluder up to half the depth range away can cast.
+    let search_world = clamp(softness * range * 0.5, 2.0 * texel * world_w, max_texels * texel * world_w);
+    var blocker_sum = 0.0;
+    var blocker_count = 0.0;
+    for (var i = 0; i < POISSON_COUNT; i = i + 1) {
+        let p = POISSON[i];
+        let r = vec2<f32>(p.x * rot.x - p.y * rot.y, p.x * rot.y + p.y * rot.x);
+        let suv = uv + r * search_world * m2uv;
+        let tc = vec2<i32>(clamp(suv, vec2<f32>(0.0), vec2<f32>(0.99999)) * dims);
+        let d = textureLoad(shadow_map, tc, 0);
+        if d < depth {
+            blocker_sum = blocker_sum + d;
+            blocker_count = blocker_count + 1.0;
         }
     }
-    return sum / 9.0;
+    if blocker_count < 0.5 {
+        return 1.0;
+    }
+    let avg_blocker = blocker_sum / blocker_count;
+    // Light-space depth is linear (orthographic), so the gap in meters is the depth delta times range.
+    let gap_world = max((depth - avg_blocker) * range, 0.0);
+    let filter_world = clamp(gap_world * softness, 1.0 * texel * world_w, max_texels * texel * world_w);
+
+    // Slope-scaled bias: the receiver plane drops away across the kernel on surfaces tilted from the light.
+    let tan_theta = min(sqrt(max(1.0 - ndotl * ndotl, 0.0)) / max(ndotl, 0.15), 4.0);
+    let kernel_bias = filter_world * tan_theta / range;
+    let cmp_depth = depth - kernel_bias;
+
+    var sum = 0.0;
+    for (var i = 0; i < POISSON_COUNT; i = i + 1) {
+        let p = POISSON[i];
+        let r = vec2<f32>(p.x * rot.x - p.y * rot.y, p.x * rot.y + p.y * rot.x);
+        let suv = uv + r * filter_world * m2uv;
+        sum = sum + textureSampleCompareLevel(shadow_map, shadow_sampler, suv, cmp_depth);
+    }
+    return sum / f32(POISSON_COUNT);
 }
 
 // Light type constants (must match Go LightKind values).
@@ -282,7 +357,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
             var vis = 1.0;
             if frame.shadow_params.w > 0.5 && (i + 1u) == u32(frame.shadow_params.w) {
-                vis = sample_shadow(in.world_position, N, L);
+                vis = sample_shadow(in.world_position, N, L, in.clip_position.xy);
             }
             result = result + (diffuse + specular) * light_color * vis;
         }
