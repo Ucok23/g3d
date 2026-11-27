@@ -104,3 +104,49 @@ func WithMap(t *Texture) MaterialOption { return mapOption{t} }
 type mapped interface {
 	Map() *Texture
 }
+
+type metallicRoughnessMapOption struct{ t *Texture }
+
+func (o metallicRoughnessMapOption) applyBasic(*BasicMaterial) {}
+func (o metallicRoughnessMapOption) applyStandard(m *StandardMaterial) {
+	m.metallicRoughnessMap = o.t
+}
+
+// WithMetallicRoughnessMap sets the metallic-roughness texture (glTF packing:
+// G = roughness, B = metallic, multiplied with the scalar factors). Use
+// WithColorSpace(ColorSpaceLinear) when creating the texture.
+func WithMetallicRoughnessMap(t *Texture) MaterialOption { return metallicRoughnessMapOption{t} }
+
+type occlusionMapOption struct{ t *Texture }
+
+func (o occlusionMapOption) applyBasic(*BasicMaterial)         {}
+func (o occlusionMapOption) applyStandard(m *StandardMaterial) { m.occlusionMap = o.t }
+
+// WithOcclusionMap sets the ambient occlusion texture (glTF packing: R channel
+// scales ambient light, 1 = unoccluded, 0 = fully occluded). Use ColorSpaceLinear.
+func WithOcclusionMap(t *Texture) MaterialOption { return occlusionMapOption{t} }
+
+type occlusionStrengthOption struct{ v float32 }
+
+func (o occlusionStrengthOption) applyBasic(*BasicMaterial)         {}
+func (o occlusionStrengthOption) applyStandard(m *StandardMaterial) { m.occlusionStrength = o.v }
+
+// WithOcclusionStrength sets how strongly the occlusion map darkens ambient light
+// in [0, 1] (default 1.0, per glTF 2.0: ao = 1 + strength * (occ - 1)).
+func WithOcclusionStrength(v float32) MaterialOption { return occlusionStrengthOption{v} }
+
+type emissiveMapOption struct{ t *Texture }
+
+func (o emissiveMapOption) applyBasic(*BasicMaterial)         {}
+func (o emissiveMapOption) applyStandard(m *StandardMaterial) { m.emissiveMap = o.t }
+
+// WithEmissiveMap sets the emissive color texture (sRGB), multiplied with the
+// material's emissive color.
+func WithEmissiveMap(t *Texture) MaterialOption { return emissiveMapOption{t} }
+
+// pbrMapped is implemented by StandardMaterial to expose auxiliary PBR textures.
+type pbrMapped interface {
+	MetallicRoughnessMap() *Texture
+	OcclusionMap() *Texture
+	EmissiveMap() *Texture
+}

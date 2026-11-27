@@ -17,30 +17,35 @@ import (
 //	offset 28: _padding          float32     (4 bytes)
 //	                                         Total: 32 bytes
 type StandardMaterial struct {
-	color       Color
-	metallic    float32
-	roughness   float32
-	emissive    Color
-	opacity     float32
-	alphaMode   AlphaMode
-	alphaCutoff float32
-	doubleSided bool
-	wireframe   bool
-	colorMap    *Texture
+	color                Color
+	metallic             float32
+	roughness            float32
+	emissive             Color
+	opacity              float32
+	alphaMode            AlphaMode
+	alphaCutoff          float32
+	doubleSided          bool
+	wireframe            bool
+	colorMap             *Texture
+	metallicRoughnessMap *Texture
+	occlusionMap         *Texture
+	occlusionStrength    float32
+	emissiveMap          *Texture
 }
 
 // NewStandardMaterial creates a PBR material with the given options.
 // Defaults: color=White, metallic=0, roughness=0.5, emissive=Black,
-// opacity=1, alphaMode=Opaque, alphaCutoff=0.5.
+// opacity=1, alphaMode=Opaque, alphaCutoff=0.5, occlusionStrength=1.
 func NewStandardMaterial(opts ...MaterialOption) *StandardMaterial {
 	m := &StandardMaterial{
-		color:       White,
-		metallic:    0,
-		roughness:   0.5,
-		emissive:    Black,
-		opacity:     1,
-		alphaMode:   AlphaModeOpaque,
-		alphaCutoff: 0.5,
+		color:             White,
+		metallic:          0,
+		roughness:         0.5,
+		emissive:          Black,
+		opacity:           1,
+		alphaMode:         AlphaModeOpaque,
+		alphaCutoff:       0.5,
+		occlusionStrength: 1,
 	}
 	for _, opt := range opts {
 		opt.applyStandard(m)
@@ -66,6 +71,18 @@ func (m *StandardMaterial) DoubleSided() bool { return m.doubleSided }
 
 // Map returns the color map multiplied with the base color, or nil.
 func (m *StandardMaterial) Map() *Texture { return m.colorMap }
+
+// MetallicRoughnessMap returns the metallic-roughness texture (G=roughness, B=metallic), or nil.
+func (m *StandardMaterial) MetallicRoughnessMap() *Texture { return m.metallicRoughnessMap }
+
+// OcclusionMap returns the ambient occlusion texture (R channel), or nil.
+func (m *StandardMaterial) OcclusionMap() *Texture { return m.occlusionMap }
+
+// OcclusionStrength returns the ambient occlusion strength in [0, 1].
+func (m *StandardMaterial) OcclusionStrength() float32 { return m.occlusionStrength }
+
+// EmissiveMap returns the emissive texture, or nil.
+func (m *StandardMaterial) EmissiveMap() *Texture { return m.emissiveMap }
 
 // Wireframe reports whether the material renders as wireframe.
 func (m *StandardMaterial) Wireframe() bool { return m.wireframe }
@@ -120,9 +137,10 @@ func (m *StandardMaterial) UniformData() []byte {
 		// the shader turns the normal of a back face toward the viewer
 		binary.LittleEndian.PutUint32(buf[28:32], math.Float32bits(1))
 	}
-	// Emissive RGB + pad (vec4<f32>, 16 bytes)
+	// Emissive RGB + occlusion_strength (vec4<f32>, 16 bytes)
 	binary.LittleEndian.PutUint32(buf[32:36], math.Float32bits(m.emissive.R))
 	binary.LittleEndian.PutUint32(buf[36:40], math.Float32bits(m.emissive.G))
 	binary.LittleEndian.PutUint32(buf[40:44], math.Float32bits(m.emissive.B))
+	binary.LittleEndian.PutUint32(buf[44:48], math.Float32bits(m.occlusionStrength))
 	return buf[:]
 }

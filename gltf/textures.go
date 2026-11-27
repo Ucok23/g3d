@@ -41,7 +41,14 @@ type uvSpec struct {
 	m   [6]float32 // u' = m0*u + m1*v + m2, v' = m3*u + m4*v + m5
 }
 
-// mapSlot is what a material's base color texture resolves to.
+// texKey distinguishes sRGB color textures (baseColor, emissive) from linear data textures
+// (metallicRoughness, occlusion, normal), even when two slots share one glTF texture index.
+type texKey struct {
+	index  int
+	linear bool
+}
+
+// mapSlot is what a material's texture slot resolves to.
 type mapSlot struct {
 	tex *g3d.Texture
 	uv  uvSpec
@@ -57,13 +64,16 @@ func (l *loader) baseColor(mi *int) *mapSlot {
 	}
 	var slot *mapSlot
 	if m := &l.doc.Materials[*mi]; m.PBR != nil && len(m.PBR.BaseColorTexture) > 0 && string(m.PBR.BaseColorTexture) != "null" {
-		slot = l.resolveTextureInfo(m.PBR.BaseColorTexture, "baseColorTexture")
+		slot = l.resolveTextureInfo(m.PBR.BaseColorTexture, "baseColorTexture", false)
 	}
 	l.slots[*mi] = slot
 	return slot
 }
 
-func (l *loader) resolveTextureInfo(raw json.RawMessage, what string) *mapSlot {
+func (l *loader) resolveTextureInfo(raw json.RawMessage, what string, linear bool) *mapSlot {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
 	var info textureInfo
 	if err := json.Unmarshal(raw, &info); err != nil || info.Index == nil {
 		l.warnf("%s is not readable and is ignored", what)
@@ -78,11 +88,30 @@ func (l *loader) resolveTextureInfo(raw json.RawMessage, what string) *mapSlot {
 			uv = transformSpec(&tt, info.TexCoord)
 		}
 	}
-	tex := l.texture(*info.Index)
+	tex := l.texture(*info.Index, linear)
 	if tex == nil {
 		return nil
 	}
 	return &mapSlot{tex: tex, uv: uv}
+}
+
+func (l *loader) resolveOcclusionInfo(raw json.RawMessage) (*g3d.Texture, float32) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, 1
+	}
+	var info struct {
+		textureInfo
+		Strength *float64 `json:"strength"`
+	}
+	if err := json.Unmarshal(raw, &info); err != nil || info.Index == nil {
+		l.warnf("occlusionTexture is not readable and is ignored")
+		return nil, 1
+	}
+	strength := float32(1)
+	if info.Strength != nil {
+		strength = float32(*info.Strength)
+	}
+	return l.texture(*info.Index, true), strength
 }
 
 // transformSpec builds the matrix of KHR_texture_transform: translation * rotation * scale applied to (u, v).
@@ -108,17 +137,19 @@ func transformSpec(tt *textureTransform, texCoord int) uvSpec {
 	return uvSpec{set: set, has: m != identity, m: m}
 }
 
-// texture builds (and caches) the g3d.Texture of textures[i]: its image, decoded, with the options of its sampler.
-func (l *loader) texture(i int) *g3d.Texture {
-	if t, ok := l.texs[i]; ok {
+// texture builds (and caches) the g3d.Texture of textures[i]: its image, decoded, with the options of its sampler
+// and the requested color space (linear for data maps, sRGB for color maps).
+func (l *loader) texture(i int, linear bool) *g3d.Texture {
+	k := texKey{index: i, linear: linear}
+	if t, ok := l.texs[k]; ok {
 		return t
 	}
-	t := l.buildTexture(i)
-	l.texs[i] = t
+	t := l.buildTexture(i, linear)
+	l.texs[k] = t
 	return t
 }
 
-func (l *loader) buildTexture(i int) *g3d.Texture {
+func (l *loader) buildTexture(i int, linear bool) *g3d.Texture {
 	if i < 0 || i >= len(l.doc.Textures) {
 		l.warnf("a material refers to texture %d, which does not exist", i)
 		return nil
@@ -137,7 +168,11 @@ func (l *loader) buildTexture(i int) *g3d.Texture {
 	if tx.Sampler != nil && *tx.Sampler >= 0 && *tx.Sampler < len(l.doc.Samplers) {
 		smp = &l.doc.Samplers[*tx.Sampler]
 	}
-	t, err := g3d.NewTextureFromImage(img, samplerOptions(smp)...)
+	opts := samplerOptions(smp)
+	if linear {
+		opts = append(opts, g3d.WithColorSpace(g3d.ColorSpaceLinear))
+	}
+	t, err := g3d.NewTextureFromImage(img, opts...)
 	if err != nil {
 		l.warnf("texture %d is ignored: %v", i, err)
 		return nil

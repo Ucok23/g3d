@@ -570,24 +570,10 @@ func (l *loader) factors(m *material) (color [4]float64, metallic, roughness flo
 	return color, metallic, roughness
 }
 
-// warnTextures says which texture slots of a material the loader does not use.
+// warnTextures says which texture slots of a material the loader does not use yet.
 func (l *loader) warnTextures(m *material) {
-	slots := []struct {
-		name string
-		raw  json.RawMessage
-	}{
-		{"normalTexture", m.NormalTexture}, {"occlusionTexture", m.OcclusionTexture}, {"emissiveTexture", m.EmissiveTexture},
-	}
-	if m.PBR != nil {
-		slots = append(slots, struct {
-			name string
-			raw  json.RawMessage
-		}{"metallicRoughnessTexture", m.PBR.MetallicRoughnessTexture})
-	}
-	for _, t := range slots {
-		if len(t.raw) > 0 {
-			l.warnf("textures are ignored (%s)", t.name)
-		}
+	if len(m.NormalTexture) > 0 && string(m.NormalTexture) != "null" {
+		l.warnf("textures are ignored (normalTexture)")
 	}
 }
 
@@ -629,6 +615,17 @@ func (l *loader) convertMaterial(m *material, slot *mapSlot) g3d.Material {
 	if len(m.EmissiveFactor) == 3 {
 		k := emissiveStrength(m)
 		opts = append(opts, g3d.WithEmissive(g3d.RGB(float32(m.EmissiveFactor[0]*k), float32(m.EmissiveFactor[1]*k), float32(m.EmissiveFactor[2]*k)).ToSRGB()))
+	}
+	if m.PBR != nil {
+		if mr := l.resolveTextureInfo(m.PBR.MetallicRoughnessTexture, "metallicRoughnessTexture", true); mr != nil {
+			opts = append(opts, g3d.WithMetallicRoughnessMap(mr.tex))
+		}
+	}
+	if occTex, occStrength := l.resolveOcclusionInfo(m.OcclusionTexture); occTex != nil {
+		opts = append(opts, g3d.WithOcclusionMap(occTex), g3d.WithOcclusionStrength(occStrength))
+	}
+	if em := l.resolveTextureInfo(m.EmissiveTexture, "emissiveTexture", false); em != nil {
+		opts = append(opts, g3d.WithEmissiveMap(em.tex))
 	}
 	return g3d.NewStandardMaterial(opts...)
 }

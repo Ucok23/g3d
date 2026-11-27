@@ -303,13 +303,11 @@ func TestMaterialsAreSharedBetweenPrimitives(t *testing.T) {
 // --- warnings ---
 
 func TestUnsupportedFeaturesAreWarnedOnce(t *testing.T) {
-	mats := `"materials":[{"pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0}},"normalTexture":{"index":1}}],`
+	mats := `"materials":[{"normalTexture":{"index":1}}],`
 	m := mustParse(t, triangleGLB("", `,"material":0`, mats))
 	joined := strings.Join(m.Warnings, "\n")
-	for _, want := range []string{"metallicRoughnessTexture", "normalTexture"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("warnings %q lack %q", joined, want)
-		}
+	if !strings.Contains(joined, "normalTexture") {
+		t.Errorf("warnings %q lack %q", joined, "normalTexture")
 	}
 	js := strings.Replace(fmt.Sprintf(triangleJSON, "", "", ""), `"indices":2`, `"indices":2,"mode":1`, 1)
 	if w := strings.Join(mustParse(t, glb(js, triangleBin())).Warnings, "\n"); !strings.Contains(w, "lines are ignored") {

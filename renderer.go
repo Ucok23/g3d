@@ -525,15 +525,30 @@ func (r *Renderer) recordDrawCall(
 	if err != nil {
 		return fmt.Errorf("color map: %w", err)
 	}
+	objEntries := []wgpu.BindGroupEntry{
+		{Binding: 0, Buffer: r.objectUniformBufs[idx], Size: uint64(len(objBytes))},
+		{Binding: 1, Buffer: r.materialUniformBufs[idx], Size: uint64(len(matBytes))},
+		{Binding: 2, TextureView: colorMap.view},
+		{Binding: 3, Sampler: colorMap.sampler},
+	}
+	if mat.ShaderID() == gpu.ShaderStandard {
+		mrTex, occTex, emTex, err := r.pbrMaterialTextures(device, queue, mat)
+		if err != nil {
+			return err
+		}
+		objEntries = append(objEntries,
+			wgpu.BindGroupEntry{Binding: 4, TextureView: mrTex.view},
+			wgpu.BindGroupEntry{Binding: 5, Sampler: mrTex.sampler},
+			wgpu.BindGroupEntry{Binding: 6, TextureView: occTex.view},
+			wgpu.BindGroupEntry{Binding: 7, Sampler: occTex.sampler},
+			wgpu.BindGroupEntry{Binding: 8, TextureView: emTex.view},
+			wgpu.BindGroupEntry{Binding: 9, Sampler: emTex.sampler},
+		)
+	}
 	objBG, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Label:  "g3d_object_bg",
-		Layout: bundle.ObjectLayout,
-		Entries: []wgpu.BindGroupEntry{
-			{Binding: 0, Buffer: r.objectUniformBufs[idx], Size: uint64(len(objBytes))},
-			{Binding: 1, Buffer: r.materialUniformBufs[idx], Size: uint64(len(matBytes))},
-			{Binding: 2, TextureView: colorMap.view},
-			{Binding: 3, Sampler: colorMap.sampler},
-		},
+		Label:   "g3d_object_bg",
+		Layout:  bundle.ObjectLayout,
+		Entries: objEntries,
 	})
 	if err != nil {
 		return fmt.Errorf("create object bind group: %w", err)

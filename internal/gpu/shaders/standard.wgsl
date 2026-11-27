@@ -55,6 +55,12 @@ struct MaterialUniforms {
 @group(1) @binding(1) var<uniform> material: MaterialUniforms;
 @group(1) @binding(2) var color_map: texture_2d<f32>;
 @group(1) @binding(3) var color_sampler: sampler;
+@group(1) @binding(4) var mr_map: texture_2d<f32>;
+@group(1) @binding(5) var mr_sampler: sampler;
+@group(1) @binding(6) var occlusion_map: texture_2d<f32>;
+@group(1) @binding(7) var occlusion_sampler: sampler;
+@group(1) @binding(8) var emissive_map: texture_2d<f32>;
+@group(1) @binding(9) var emissive_sampler: sampler;
 
 // --- Vertex I/O ---
 
@@ -195,12 +201,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         N = -N;
     }
 
+    let mr_sample = textureSample(mr_map, mr_sampler, in.uv);
+    let occ_sample = textureSample(occlusion_map, occlusion_sampler, in.uv);
+    let em_sample = textureSample(emissive_map, emissive_sampler, in.uv);
+
+    let roughness = clamp(material.roughness * mr_sample.g, 0.0, 1.0);
+    let metalness = clamp(material.metalness * mr_sample.b, 0.0, 1.0);
+    let ao = 1.0 + material.emissive.w * (occ_sample.r - 1.0);
+
     var result = vec3<f32>(0.0, 0.0, 0.0);
 
     // Shininess: high when smooth (roughness=0), low when rough (roughness=1).
-    let shininess = mix(256.0, 2.0, material.roughness);
-    // Specular intensity: no specular when fully rough.
-    let specular_strength = (1.0 - material.roughness) * 0.5;
+    let shininess = mix(256.0, 2.0, roughness);
+    // Specular intensity & tint: dielectrics (metalness=0) keep earlier Blinn-Phong
+    // behavior; metals attenuate diffuse and tint specular with base_color.
+    let diffuse_albedo = base_color * (1.0 - metalness);
+    let spec_tint = mix(vec3<f32>(1.0), base_color, metalness);
+    let specular_strength = (1.0 - roughness) * mix(0.5, 1.0, metalness);
 
     let count = min(frame.light_count, 4u);
     for (var i = 0u; i < count; i = i + 1u) {
@@ -208,18 +225,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_color = light.color * light.intensity;
 
         if light.light_type == LIGHT_AMBIENT {
-            // Ambient: uniform illumination, no direction.
-            result = result + base_color * light_color;
+            // Ambient: uniform illumination modulated by ambient occlusion.
+            result = result + base_color * light_color * ao;
         } else if light.light_type == LIGHT_DIRECTIONAL {
-            // Blinn-Phong directional light.
+            // Blinn-Phong directional light with metallic-roughness modulation.
             let L = normalize(-light.direction);
             let H = normalize(L + V);
 
             let NdotL = max(dot(N, L), 0.0);
             let NdotH = max(dot(N, H), 0.0);
 
-            let diffuse = base_color * NdotL;
-            let specular = vec3<f32>(pow(NdotH, shininess)) * specular_strength;
+            let diffuse = diffuse_albedo * NdotL;
+            let specular = spec_tint * pow(NdotH, shininess) * specular_strength;
 
             var vis = 1.0;
             if frame.shadow_params.w > 0.5 && (i + 1u) == u32(frame.shadow_params.w) {
@@ -233,7 +250,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (frame.flags & FLAG_MANAGED) != 0u {
         emissive = srgb_to_linear(emissive);
     }
-    result = result + emissive;
+    result = result + emissive * em_sample.rgb;
 
     if (frame.flags & (FLAG_TONEMAP_REINHARD | FLAG_TONEMAP_ACES)) != 0u {
         let exp_mul = select(1.0, frame.exposure, frame.exposure > 0.0);

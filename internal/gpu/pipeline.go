@@ -115,35 +115,56 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 	}
 
 	// Group 1: per-object uniforms (ObjectUniforms binding 0, MaterialUniforms binding 1),
-	// the color map (binding 2) and its sampler (binding 3).
-	objectLayout, err := c.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Label: "g3d_object_layout_" + key.ShaderID,
-		Entries: []gputypes.BindGroupLayoutEntry{
-			{
-				Binding:    0,
-				Visibility: gputypes.ShaderStageVertex,
-				Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: ObjectUniformsSize},
-			},
-			{
-				Binding:    1,
-				Visibility: gputypes.ShaderStageFragment,
-				Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: materialUniformSize},
-			},
-			{
-				// The color map. A material without one gets a 1x1 white texture, so every draw binds a texture.
-				Binding:    2,
-				Visibility: gputypes.ShaderStageFragment,
-				Texture: &gputypes.TextureBindingLayout{
-					SampleType:    gputypes.TextureSampleTypeFloat,
-					ViewDimension: gputypes.TextureViewDimension2D,
-				},
-			},
-			{
-				Binding:    3,
-				Visibility: gputypes.ShaderStageFragment,
-				Sampler:    &gputypes.SamplerBindingLayout{Type: gputypes.SamplerBindingTypeFiltering},
+	// the color map (binding 2) and its sampler (binding 3). StandardMaterial also binds
+	// metallic-roughness (4,5), occlusion (6,7), and emissive (8,9) maps + samplers.
+	objectEntries := []gputypes.BindGroupLayoutEntry{
+		{
+			Binding:    0,
+			Visibility: gputypes.ShaderStageVertex,
+			Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: ObjectUniformsSize},
+		},
+		{
+			Binding:    1,
+			Visibility: gputypes.ShaderStageFragment,
+			Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform, MinBindingSize: materialUniformSize},
+		},
+		{
+			// The color map. A material without one gets a 1x1 white texture, so every draw binds a texture.
+			Binding:    2,
+			Visibility: gputypes.ShaderStageFragment,
+			Texture: &gputypes.TextureBindingLayout{
+				SampleType:    gputypes.TextureSampleTypeFloat,
+				ViewDimension: gputypes.TextureViewDimension2D,
 			},
 		},
+		{
+			Binding:    3,
+			Visibility: gputypes.ShaderStageFragment,
+			Sampler:    &gputypes.SamplerBindingLayout{Type: gputypes.SamplerBindingTypeFiltering},
+		},
+	}
+	if key.ShaderID == ShaderStandard {
+		for _, pair := range [][2]uint32{{4, 5}, {6, 7}, {8, 9}} {
+			objectEntries = append(objectEntries,
+				gputypes.BindGroupLayoutEntry{
+					Binding:    pair[0],
+					Visibility: gputypes.ShaderStageFragment,
+					Texture: &gputypes.TextureBindingLayout{
+						SampleType:    gputypes.TextureSampleTypeFloat,
+						ViewDimension: gputypes.TextureViewDimension2D,
+					},
+				},
+				gputypes.BindGroupLayoutEntry{
+					Binding:    pair[1],
+					Visibility: gputypes.ShaderStageFragment,
+					Sampler:    &gputypes.SamplerBindingLayout{Type: gputypes.SamplerBindingTypeFiltering},
+				},
+			)
+		}
+	}
+	objectLayout, err := c.device.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
+		Label:   "g3d_object_layout_" + key.ShaderID,
+		Entries: objectEntries,
 	})
 	if err != nil {
 		frameLayout.Release()

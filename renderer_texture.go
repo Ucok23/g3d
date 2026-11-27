@@ -167,6 +167,36 @@ func (r *Renderer) materialTexture(device *wgpu.Device, queue *wgpu.Queue, mat M
 	return r.whiteTexture(device, queue)
 }
 
+// pbrMaterialTextures resolves metallic-roughness, occlusion, and emissive GPU textures for mat,
+// falling back to the 1x1 white texture for any unset slot.
+func (r *Renderer) pbrMaterialTextures(device *wgpu.Device, queue *wgpu.Queue, mat Material) (mr, occ, emissive *gpuTexture, err error) {
+	white, err := r.whiteTexture(device, queue)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	mr, occ, emissive = white, white, white
+	pm, ok := mat.(pbrMapped)
+	if !ok {
+		return mr, occ, emissive, nil
+	}
+	if t := pm.MetallicRoughnessMap(); t != nil {
+		if mr, err = r.ensureTexture(device, queue, t); err != nil {
+			return nil, nil, nil, fmt.Errorf("metallic-roughness map: %w", err)
+		}
+	}
+	if t := pm.OcclusionMap(); t != nil {
+		if occ, err = r.ensureTexture(device, queue, t); err != nil {
+			return nil, nil, nil, fmt.Errorf("occlusion map: %w", err)
+		}
+	}
+	if t := pm.EmissiveMap(); t != nil {
+		if emissive, err = r.ensureTexture(device, queue, t); err != nil {
+			return nil, nil, nil, fmt.Errorf("emissive map: %w", err)
+		}
+	}
+	return mr, occ, emissive, nil
+}
+
 // releaseTextures frees every cached GPU texture.
 func (r *Renderer) releaseTextures() {
 	for _, g := range r.textures {

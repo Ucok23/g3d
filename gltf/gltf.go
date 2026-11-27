@@ -51,7 +51,7 @@ func Load(path string, opts ...Option) (*Model, error) {
 func Parse(data []byte, opts ...Option) (*Model, error) {
 	l := &loader{
 		geoms: map[geomKey]*g3d.BufferGeometry{}, mats: map[int]g3d.Material{}, seen: map[string]bool{},
-		slots: map[int]*mapSlot{}, texs: map[int]*g3d.Texture{}, images: map[int]image.Image{},
+		slots: map[int]*mapSlot{}, texs: map[texKey]*g3d.Texture{}, images: map[int]image.Image{},
 	}
 	for _, o := range opts {
 		o(l)
@@ -85,9 +85,9 @@ type loader struct {
 	seen     map[string]bool
 	geoms    map[geomKey]*g3d.BufferGeometry
 	mats     map[int]g3d.Material
-	slots    map[int]*mapSlot     // the resolved base color texture of each material
-	texs     map[int]*g3d.Texture // built textures by index
-	images   map[int]image.Image  // decoded images by index
+	slots    map[int]*mapSlot        // the resolved base color texture of each material
+	texs     map[texKey]*g3d.Texture // built textures by (index, linear)
+	images   map[int]image.Image     // decoded images by index
 	pixels   int64                // pixels of the images decoded so far
 	bounds   bbox
 }
