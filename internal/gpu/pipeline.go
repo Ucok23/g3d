@@ -20,6 +20,7 @@ type PipelineKey struct {
 	SurfaceFormat gputypes.TextureFormat
 	DepthFormat   gputypes.TextureFormat
 	DoubleSided   bool
+	SampleCount   uint32
 }
 
 // PipelineBundle holds a compiled render pipeline and its associated layouts.
@@ -160,7 +161,7 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 		},
 		Primitive:    DefaultPrimitive(key.DoubleSided),
 		DepthStencil: OpaqueDepthStencil(key.DepthFormat),
-		Multisample:  NoMultisample(),
+		Multisample:  Multisample(key.SampleCount),
 	})
 	if err != nil {
 		pipeLayout.Release()

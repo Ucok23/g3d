@@ -52,10 +52,18 @@ func DefaultPrimitive(doubleSided bool) gputypes.PrimitiveState {
 }
 
 // NoMultisample returns a MultisampleState with count=1 (no MSAA).
-// Phase 1 does not use MSAA; it can be added in Phase 2.
 func NoMultisample() gputypes.MultisampleState {
+	return Multisample(1)
+}
+
+// Multisample returns a MultisampleState for the given sample count.
+// Values <= 1 normalize to 1 (no MSAA).
+func Multisample(count uint32) gputypes.MultisampleState {
+	if count <= 1 {
+		count = 1
+	}
 	return gputypes.MultisampleState{
-		Count: 1,
+		Count: count,
 		Mask:  0xFFFFFFFF,
 	}
 }

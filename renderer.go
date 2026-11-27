@@ -36,6 +36,10 @@ type Renderer struct {
 	depthView    *wgpu.TextureView
 	depthFormat  gputypes.TextureFormat
 
+	sampleCount uint32
+	msaaTexture *wgpu.Texture
+	msaaView    *wgpu.TextureView
+
 	width, height uint32
 	surfaceFormat gputypes.TextureFormat
 
@@ -126,7 +130,7 @@ func NewRendererFromDevice(
 	return r, nil
 }
 
-// SetSize sets the render target dimensions and (re)creates the depth texture.
+// SetSize sets the render target dimensions and (re)creates the depth and MSAA textures.
 // Must be called before the first Render call and whenever the viewport resizes.
 func (r *Renderer) SetSize(width, height uint32) {
 	if width == r.width && height == r.height {
@@ -135,6 +139,7 @@ func (r *Renderer) SetSize(width, height uint32) {
 	r.width = width
 	r.height = height
 	r.recreateDepthTexture()
+	_ = r.recreateMSAATexture()
 }
 
 // Render draws the scene from the camera's perspective into the given target view.
@@ -229,6 +234,9 @@ func (r *Renderer) validateRenderState() error {
 	}
 	if r.depthView == nil {
 		return fmt.Errorf("g3d: depth texture not created, call SetSize first")
+	}
+	if r.effectiveSampleCount() > 1 && r.msaaView == nil {
+		return fmt.Errorf("g3d: MSAA color texture not created, call SetSize first")
 	}
 	return nil
 }
@@ -334,15 +342,21 @@ func (r *Renderer) recordFrame(
 		stencilStoreOp = gputypes.StoreOpDiscard
 		stencilReadOnly = false
 	}
+	colorAttachment := wgpu.RenderPassColorAttachment{
+		View:       targetView,
+		LoadOp:     gputypes.LoadOpClear,
+		StoreOp:    gputypes.StoreOpStore,
+		ClearValue: gputypes.Color{R: float64(bg.R), G: float64(bg.G), B: float64(bg.B), A: float64(bg.A)},
+	}
+	if r.effectiveSampleCount() > 1 {
+		colorAttachment.View = r.msaaView
+		colorAttachment.ResolveTarget = targetView
+		colorAttachment.StoreOp = gputypes.StoreOpDiscard
+	}
 	renderPass, err := encoder.BeginRenderPass(&wgpu.RenderPassDescriptor{
 		Label: "g3d_forward",
 		ColorAttachments: []wgpu.RenderPassColorAttachment{
-			{
-				View:       targetView,
-				LoadOp:     gputypes.LoadOpClear,
-				StoreOp:    gputypes.StoreOpStore,
-				ClearValue: gputypes.Color{R: float64(bg.R), G: float64(bg.G), B: float64(bg.B), A: float64(bg.A)},
-			},
+			colorAttachment,
 		},
 		DepthStencilAttachment: &wgpu.RenderPassDepthStencilAttachment{
 			View:            r.depthView,
@@ -400,6 +414,7 @@ func (r *Renderer) drawBucket(
 			SurfaceFormat: r.surfaceFormat,
 			DepthFormat:   r.depthFormat,
 			DoubleSided:   mat.DoubleSided(),
+			SampleCount:   r.effectiveSampleCount(),
 		}
 
 		if !pipelineSet || pipeKey != currentPipelineKey {
@@ -544,12 +559,13 @@ func (r *Renderer) recordDrawCall(
 func (r *Renderer) Release() {
 	// Release persistent uniform buffers and bind groups.
 	r.releasePersistentResources()
+	r.releaseMSAATexture()
 	r.releaseDepthTexture()
 	r.gpuState.Close()
 }
 
 // recreateDepthTexture destroys the old depth texture and creates a new one
-// at the current width/height.
+// at the current width/height and sample count.
 func (r *Renderer) recreateDepthTexture() {
 	r.releaseDepthTexture()
 
@@ -570,7 +586,7 @@ func (r *Renderer) recreateDepthTexture() {
 			DepthOrArrayLayers: 1,
 		},
 		MipLevelCount: 1,
-		SampleCount:   1,
+		SampleCount:   r.effectiveSampleCount(),
 		Dimension:     gputypes.TextureDimension2D,
 		Format:        r.depthFormat,
 		Usage:         gputypes.TextureUsageRenderAttachment,
