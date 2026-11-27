@@ -96,7 +96,11 @@ func uploadTexture(device *wgpu.Device, queue *wgpu.Queue, d *textureUpload) (*g
 		g.release()
 		return nil, fmt.Errorf("create texture view: %w", err)
 	}
-	g.sampler, err = device.CreateSampler(&wgpu.SamplerDescriptor{
+	aniso := uint16(1)
+	if len(d.levels) > 1 && d.mag == FilterLinear && d.min == FilterLinear && d.mipFilter == FilterLinear {
+		aniso = 8
+	}
+	samplerDesc := &wgpu.SamplerDescriptor{
 		Label:        d.label + "_sampler",
 		AddressModeU: addressMode(d.wrapU),
 		AddressModeV: addressMode(d.wrapV),
@@ -106,7 +110,13 @@ func uploadTexture(device *wgpu.Device, queue *wgpu.Queue, d *textureUpload) (*g
 		MipmapFilter: filterMode(d.mipFilter),
 		LodMinClamp:  d.lodMin,
 		LodMaxClamp:  d.lodMax,
-	})
+		Anisotropy:   aniso,
+	}
+	g.sampler, err = device.CreateSampler(samplerDesc)
+	if err != nil && aniso > 1 {
+		samplerDesc.Anisotropy = 1
+		g.sampler, err = device.CreateSampler(samplerDesc)
+	}
 	if err != nil {
 		g.release()
 		return nil, fmt.Errorf("create sampler: %w", err)
