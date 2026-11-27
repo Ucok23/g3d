@@ -570,12 +570,8 @@ func (l *loader) factors(m *material) (color [4]float64, metallic, roughness flo
 	return color, metallic, roughness
 }
 
-// warnTextures says which texture slots of a material the loader does not use yet.
-func (l *loader) warnTextures(m *material) {
-	if len(m.NormalTexture) > 0 && string(m.NormalTexture) != "null" {
-		l.warnf("textures are ignored (normalTexture)")
-	}
-}
+// warnTextures is reserved for any future unsupported material texture extensions.
+func (l *loader) warnTextures(*material) {}
 
 // convertMaterial builds the g3d material of m. glTF colors are linear and g3d colors are sRGB (the colors you
 // would write in CSS), so the factors are converted with ToSRGB: an unlit material then shows the color glTF
@@ -626,6 +622,9 @@ func (l *loader) convertMaterial(m *material, slot *mapSlot) g3d.Material {
 	}
 	if em := l.resolveTextureInfo(m.EmissiveTexture, "emissiveTexture", false); em != nil {
 		opts = append(opts, g3d.WithEmissiveMap(em.tex))
+	}
+	if normTex, normScale := l.resolveNormalInfo(m.NormalTexture); normTex != nil {
+		opts = append(opts, g3d.WithNormalMap(normTex), g3d.WithNormalScale(normScale))
 	}
 	return g3d.NewStandardMaterial(opts...)
 }

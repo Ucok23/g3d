@@ -74,10 +74,10 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 
 	// Determine material uniform size from shader ID.
 	// basic.wgsl MaterialUniforms = 16 bytes (vec4 color).
-	// standard.wgsl MaterialUniforms = 48 bytes (vec4 color + 4 scalars + vec4 emissive).
+	// standard.wgsl MaterialUniforms = 64 bytes (vec4 color + 4 scalars + vec4 emissive/occ + vec4 normalScale).
 	materialUniformSize := uint64(16)
 	if key.ShaderID == ShaderStandard {
-		materialUniformSize = 48
+		materialUniformSize = 64
 	}
 
 	// Group 0: per-frame uniforms (FrameUniforms, 304 bytes).
@@ -144,7 +144,7 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 		},
 	}
 	if key.ShaderID == ShaderStandard {
-		for _, pair := range [][2]uint32{{4, 5}, {6, 7}, {8, 9}} {
+		for _, pair := range [][2]uint32{{4, 5}, {6, 7}, {8, 9}, {10, 11}} {
 			objectEntries = append(objectEntries,
 				gputypes.BindGroupLayoutEntry{
 					Binding:    pair[0],

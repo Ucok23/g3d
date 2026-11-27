@@ -114,6 +114,25 @@ func (l *loader) resolveOcclusionInfo(raw json.RawMessage) (*g3d.Texture, float3
 	return l.texture(*info.Index, true), strength
 }
 
+func (l *loader) resolveNormalInfo(raw json.RawMessage) (*g3d.Texture, float32) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, 1
+	}
+	var info struct {
+		textureInfo
+		Scale *float64 `json:"scale"`
+	}
+	if err := json.Unmarshal(raw, &info); err != nil || info.Index == nil {
+		l.warnf("normalTexture is not readable and is ignored")
+		return nil, 1
+	}
+	scale := float32(1)
+	if info.Scale != nil {
+		scale = float32(*info.Scale)
+	}
+	return l.texture(*info.Index, true), scale
+}
+
 // transformSpec builds the matrix of KHR_texture_transform: translation * rotation * scale applied to (u, v).
 func transformSpec(tt *textureTransform, texCoord int) uvSpec {
 	off, sc := [2]float64{0, 0}, [2]float64{1, 1}

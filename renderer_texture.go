@@ -167,34 +167,60 @@ func (r *Renderer) materialTexture(device *wgpu.Device, queue *wgpu.Queue, mat M
 	return r.whiteTexture(device, queue)
 }
 
-// pbrMaterialTextures resolves metallic-roughness, occlusion, and emissive GPU textures for mat,
-// falling back to the 1x1 white texture for any unset slot.
-func (r *Renderer) pbrMaterialTextures(device *wgpu.Device, queue *wgpu.Queue, mat Material) (mr, occ, emissive *gpuTexture, err error) {
+// flatNormalTexture returns the 1x1 flat tangent-space normal (128,128,255,255 = (0,0,1))
+// bound for materials without a normal map.
+func (r *Renderer) flatNormalTexture(device *wgpu.Device, queue *wgpu.Queue) (*gpuTexture, error) {
+	if r.defaultNormalTexture != nil {
+		return r.defaultNormalTexture, nil
+	}
+	g, err := uploadTexture(device, queue, &textureUpload{
+		label: "g3d_flat_normal", format: gputypes.TextureFormatRGBA8Unorm, width: 1, height: 1, levels: [][]byte{{128, 128, 255, 255}},
+		wrapU: WrapClamp, wrapV: WrapClamp, mag: FilterLinear, min: FilterLinear, mipFilter: FilterNearest,
+	})
+	if err != nil {
+		return nil, err
+	}
+	r.defaultNormalTexture = g
+	return g, nil
+}
+
+// pbrMaterialTextures resolves metallic-roughness, occlusion, emissive, and normal GPU textures for mat,
+// falling back to 1x1 defaults (white or flat normal) for any unset slot.
+func (r *Renderer) pbrMaterialTextures(device *wgpu.Device, queue *wgpu.Queue, mat Material) (mr, occ, emissive, norm *gpuTexture, err error) {
 	white, err := r.whiteTexture(device, queue)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	mr, occ, emissive = white, white, white
+	flatNorm, err := r.flatNormalTexture(device, queue)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	mr, occ, emissive, norm = white, white, white, flatNorm
 	pm, ok := mat.(pbrMapped)
 	if !ok {
-		return mr, occ, emissive, nil
+		return mr, occ, emissive, norm, nil
 	}
 	if t := pm.MetallicRoughnessMap(); t != nil {
 		if mr, err = r.ensureTexture(device, queue, t); err != nil {
-			return nil, nil, nil, fmt.Errorf("metallic-roughness map: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("metallic-roughness map: %w", err)
 		}
 	}
 	if t := pm.OcclusionMap(); t != nil {
 		if occ, err = r.ensureTexture(device, queue, t); err != nil {
-			return nil, nil, nil, fmt.Errorf("occlusion map: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("occlusion map: %w", err)
 		}
 	}
 	if t := pm.EmissiveMap(); t != nil {
 		if emissive, err = r.ensureTexture(device, queue, t); err != nil {
-			return nil, nil, nil, fmt.Errorf("emissive map: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("emissive map: %w", err)
 		}
 	}
-	return mr, occ, emissive, nil
+	if t := pm.NormalMap(); t != nil {
+		if norm, err = r.ensureTexture(device, queue, t); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("normal map: %w", err)
+		}
+	}
+	return mr, occ, emissive, norm, nil
 }
 
 // releaseTextures frees every cached GPU texture.
@@ -205,4 +231,6 @@ func (r *Renderer) releaseTextures() {
 	r.textures = nil
 	r.defaultTexture.release()
 	r.defaultTexture = nil
+	r.defaultNormalTexture.release()
+	r.defaultNormalTexture = nil
 }

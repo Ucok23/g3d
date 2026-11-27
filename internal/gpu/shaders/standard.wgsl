@@ -43,8 +43,9 @@ struct MaterialUniforms {
     roughness: f32,                  //  4 bytes (offset 20)
     alpha_cutoff: f32,               //  4 bytes (offset 24)
     double_sided: f32,               //  4 bytes (offset 28) — 1.0 when the material is double-sided, else 0.0
-    emissive: vec4<f32>,             // 16 bytes (offset 32) — RGB emissive + pad
-};                                   // Total: 48 bytes, 16-byte aligned
+    emissive: vec4<f32>,             // 16 bytes (offset 32) — RGB emissive + occlusion_strength (w)
+    extra: vec4<f32>,                // 16 bytes (offset 48) — x=normal_scale
+};                                   // Total: 64 bytes, 16-byte aligned
 
 // --- Bind groups ---
 
@@ -61,6 +62,8 @@ struct MaterialUniforms {
 @group(1) @binding(7) var occlusion_sampler: sampler;
 @group(1) @binding(8) var emissive_map: texture_2d<f32>;
 @group(1) @binding(9) var emissive_sampler: sampler;
+@group(1) @binding(10) var normal_map: texture_2d<f32>;
+@group(1) @binding(11) var normal_sampler: sampler;
 
 // --- Vertex I/O ---
 
@@ -139,6 +142,43 @@ fn tonemap_aces(c: vec3<f32>) -> vec3<f32> {
 }
 
 
+// Perturb surface normal N using a tangent-space normal map (OpenGL/glTF convention:
+// +R right (+u), +G up (-v), +B out (+N)) derived from screen-space derivatives of world
+// position and UV. Works without vertex TANGENT attributes on both GPU and software backends.
+fn perturb_normal(N: vec3<f32>, world_pos: vec3<f32>, uv: vec2<f32>, map_n: vec3<f32>, scale: f32) -> vec3<f32> {
+    let tx = (map_n.x * 2.0 - 1.0) * scale;
+    let ty = (map_n.y * 2.0 - 1.0) * scale;
+    let tz = map_n.z * 2.0 - 1.0;
+    // Fast-path for default flat normal (128,128,255) or zero scale.
+    if (tx * tx + ty * ty) < 1e-4 {
+        return N;
+    }
+    let dp1 = dpdx(world_pos);
+    let dp2 = dpdy(world_pos);
+    let duv1 = dpdx(uv);
+    let duv2 = dpdy(uv);
+
+    let det = duv1.x * duv2.y - duv1.y * duv2.x;
+    if abs(det) < 1e-12 {
+        return N;
+    }
+    let inv_det = 1.0 / det;
+    // T points along +u, B_v points along +v; glTF/OpenGL +G points along -v (up).
+    let T_raw = (dp1 * duv2.y - dp2 * duv1.y) * inv_det;
+    let B_up_raw = -(dp2 * duv1.x - dp1 * duv2.x) * inv_det;
+
+    let T_ortho = T_raw - N * dot(N, T_raw);
+    let B_ortho = B_up_raw - N * dot(N, B_up_raw);
+    let t_len_sq = dot(T_ortho, T_ortho);
+    let b_len_sq = dot(B_ortho, B_ortho);
+    if t_len_sq < 1e-12 || b_len_sq < 1e-12 {
+        return N;
+    }
+    let T = T_ortho * inverseSqrt(t_len_sq);
+    let B = B_ortho * inverseSqrt(b_len_sq);
+    return normalize(T * tx + B * ty + N * tz);
+}
+
 // 3x3 PCF directional shadow visibility (1.0 = lit, 0.0 = fully occluded).
 fn sample_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
     if frame.shadow_params.w < 0.5 {
@@ -200,6 +240,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if material.double_sided > 0.5 && dot(N, V) < 0.0 {
         N = -N;
     }
+    let norm_sample = textureSample(normal_map, normal_sampler, in.uv).rgb;
+    N = perturb_normal(N, in.world_position, in.uv, norm_sample, material.extra.x);
 
     let mr_sample = textureSample(mr_map, mr_sampler, in.uv);
     let occ_sample = textureSample(occlusion_map, occlusion_sampler, in.uv);

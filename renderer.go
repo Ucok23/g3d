@@ -65,10 +65,11 @@ type Renderer struct {
 	geomIdxBufs   map[Geometry]*wgpu.Buffer
 	geomIdxCounts map[Geometry]uint32
 
-	// Cached GPU textures keyed by Texture pointer identity, uploaded on first use, and the 1x1 white
-	// texture bound for materials without a color map (see renderer_texture.go).
-	textures       map[*Texture]*gpuTexture
-	defaultTexture *gpuTexture
+	// Cached GPU textures keyed by Texture pointer identity, uploaded on first use, the 1x1 white
+	// texture bound for unset color/MR/AO/emissive maps, and the 1x1 flat normal texture (see renderer_texture.go).
+	textures             map[*Texture]*gpuTexture
+	defaultTexture       *gpuTexture
+	defaultNormalTexture *gpuTexture
 
 	// How colors are treated (see ColorManagement); the zero value keeps the earlier behavior.
 	colorManagement ColorManagement
@@ -532,7 +533,7 @@ func (r *Renderer) recordDrawCall(
 		{Binding: 3, Sampler: colorMap.sampler},
 	}
 	if mat.ShaderID() == gpu.ShaderStandard {
-		mrTex, occTex, emTex, err := r.pbrMaterialTextures(device, queue, mat)
+		mrTex, occTex, emTex, normTex, err := r.pbrMaterialTextures(device, queue, mat)
 		if err != nil {
 			return err
 		}
@@ -543,6 +544,8 @@ func (r *Renderer) recordDrawCall(
 			wgpu.BindGroupEntry{Binding: 7, Sampler: occTex.sampler},
 			wgpu.BindGroupEntry{Binding: 8, TextureView: emTex.view},
 			wgpu.BindGroupEntry{Binding: 9, Sampler: emTex.sampler},
+			wgpu.BindGroupEntry{Binding: 10, TextureView: normTex.view},
+			wgpu.BindGroupEntry{Binding: 11, Sampler: normTex.sampler},
 		)
 	}
 	objBG, err := device.CreateBindGroup(&wgpu.BindGroupDescriptor{
@@ -688,10 +691,10 @@ func (r *Renderer) ensureObjectPool(device *wgpu.Device, idx int) error {
 	}
 
 	// Material uniform pool must match the object pool size.
-	// Use 48 bytes (StandardMaterial size) as the max — BasicMaterial (16 bytes)
-	// fits within 48 bytes with zero padding, and WriteBuffer only writes the
+	// Use 64 bytes (StandardMaterial size) as the max — BasicMaterial (16 bytes)
+	// fits within 64 bytes with zero padding, and WriteBuffer only writes the
 	// actual data length.
-	const maxMaterialUniformSize = 48
+	const maxMaterialUniformSize = 64
 	for idx >= len(r.materialUniformBufs) {
 		n := len(r.materialUniformBufs)
 		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{

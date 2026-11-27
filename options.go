@@ -144,9 +144,27 @@ func (o emissiveMapOption) applyStandard(m *StandardMaterial) { m.emissiveMap = 
 // material's emissive color.
 func WithEmissiveMap(t *Texture) MaterialOption { return emissiveMapOption{t} }
 
+type normalMapOption struct{ t *Texture }
+
+func (o normalMapOption) applyBasic(*BasicMaterial)         {}
+func (o normalMapOption) applyStandard(m *StandardMaterial) { m.normalMap = o.t }
+
+// WithNormalMap sets the tangent-space normal map texture (OpenGL/glTF convention:
+// +R right, +G up, +B out). Create the texture with WithColorSpace(ColorSpaceLinear).
+func WithNormalMap(t *Texture) MaterialOption { return normalMapOption{t} }
+
+type normalScaleOption struct{ v float32 }
+
+func (o normalScaleOption) applyBasic(*BasicMaterial)         {}
+func (o normalScaleOption) applyStandard(m *StandardMaterial) { m.normalScale = o.v }
+
+// WithNormalScale sets the XY perturbation strength of the normal map (default 1.0).
+func WithNormalScale(v float32) MaterialOption { return normalScaleOption{v} }
+
 // pbrMapped is implemented by StandardMaterial to expose auxiliary PBR textures.
 type pbrMapped interface {
 	MetallicRoughnessMap() *Texture
 	OcclusionMap() *Texture
 	EmissiveMap() *Texture
+	NormalMap() *Texture
 }

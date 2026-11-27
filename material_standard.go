@@ -31,11 +31,13 @@ type StandardMaterial struct {
 	occlusionMap         *Texture
 	occlusionStrength    float32
 	emissiveMap          *Texture
+	normalMap            *Texture
+	normalScale          float32
 }
 
 // NewStandardMaterial creates a PBR material with the given options.
 // Defaults: color=White, metallic=0, roughness=0.5, emissive=Black,
-// opacity=1, alphaMode=Opaque, alphaCutoff=0.5, occlusionStrength=1.
+// opacity=1, alphaMode=Opaque, alphaCutoff=0.5, occlusionStrength=1, normalScale=1.
 func NewStandardMaterial(opts ...MaterialOption) *StandardMaterial {
 	m := &StandardMaterial{
 		color:             White,
@@ -46,6 +48,7 @@ func NewStandardMaterial(opts ...MaterialOption) *StandardMaterial {
 		alphaMode:         AlphaModeOpaque,
 		alphaCutoff:       0.5,
 		occlusionStrength: 1,
+		normalScale:       1,
 	}
 	for _, opt := range opts {
 		opt.applyStandard(m)
@@ -84,6 +87,12 @@ func (m *StandardMaterial) OcclusionStrength() float32 { return m.occlusionStren
 // EmissiveMap returns the emissive texture, or nil.
 func (m *StandardMaterial) EmissiveMap() *Texture { return m.emissiveMap }
 
+// NormalMap returns the tangent-space normal map, or nil.
+func (m *StandardMaterial) NormalMap() *Texture { return m.normalMap }
+
+// NormalScale returns the normal map XY scale factor (default 1.0).
+func (m *StandardMaterial) NormalScale() float32 { return m.normalScale }
+
 // Wireframe reports whether the material renders as wireframe.
 func (m *StandardMaterial) Wireframe() bool { return m.wireframe }
 
@@ -108,22 +117,23 @@ func (m *StandardMaterial) AlphaMode() AlphaMode { return m.alphaMode }
 // AlphaCutoff returns the alpha test threshold for AlphaModeMask.
 func (m *StandardMaterial) AlphaCutoff() float32 { return m.alphaCutoff }
 
-// UniformData returns 48 bytes encoding the material properties for GPU upload.
+// UniformData returns 64 bytes encoding the material properties for GPU upload.
 // The alpha component of color is pre-multiplied with opacity.
 //
 // Layout (matches WGSL MaterialUniforms struct):
 //
-//	offset  0: R             float32
-//	offset  4: G             float32
-//	offset  8: B             float32
-//	offset 12: A             float32 (color.A * opacity)
-//	offset 16: metallic      float32
-//	offset 20: roughness     float32
-//	offset 24: alpha_cutoff  float32
-//	offset 28: double_sided  float32 (1 when the material is double-sided, else 0)
-//	offset 32: emissive RGB  [3]float32 + pad (16 bytes)
+//	offset  0: R                 float32
+//	offset  4: G                 float32
+//	offset  8: B                 float32
+//	offset 12: A                 float32 (color.A * opacity)
+//	offset 16: metallic          float32
+//	offset 20: roughness         float32
+//	offset 24: alpha_cutoff      float32
+//	offset 28: double_sided      float32 (1 when the material is double-sided, else 0)
+//	offset 32: emissive RGB      [3]float32 + occlusion_strength (16 bytes)
+//	offset 48: normal_scale      float32 + 3x pad (16 bytes)
 func (m *StandardMaterial) UniformData() []byte {
-	var buf [48]byte
+	var buf [64]byte
 	// Color RGBA (vec4<f32>, 16 bytes)
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(m.color.R))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(m.color.G))
@@ -142,5 +152,7 @@ func (m *StandardMaterial) UniformData() []byte {
 	binary.LittleEndian.PutUint32(buf[36:40], math.Float32bits(m.emissive.G))
 	binary.LittleEndian.PutUint32(buf[40:44], math.Float32bits(m.emissive.B))
 	binary.LittleEndian.PutUint32(buf[44:48], math.Float32bits(m.occlusionStrength))
+	// Normal scale + pad (vec4<f32>, 16 bytes)
+	binary.LittleEndian.PutUint32(buf[48:52], math.Float32bits(m.normalScale))
 	return buf[:]
 }

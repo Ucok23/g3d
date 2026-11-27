@@ -303,12 +303,6 @@ func TestMaterialsAreSharedBetweenPrimitives(t *testing.T) {
 // --- warnings ---
 
 func TestUnsupportedFeaturesAreWarnedOnce(t *testing.T) {
-	mats := `"materials":[{"normalTexture":{"index":1}}],`
-	m := mustParse(t, triangleGLB("", `,"material":0`, mats))
-	joined := strings.Join(m.Warnings, "\n")
-	if !strings.Contains(joined, "normalTexture") {
-		t.Errorf("warnings %q lack %q", joined, "normalTexture")
-	}
 	js := strings.Replace(fmt.Sprintf(triangleJSON, "", "", ""), `"indices":2`, `"indices":2,"mode":1`, 1)
 	if w := strings.Join(mustParse(t, glb(js, triangleBin())).Warnings, "\n"); !strings.Contains(w, "lines are ignored") {
 		t.Errorf("a line primitive should warn: %q", w)
