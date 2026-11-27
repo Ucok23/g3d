@@ -36,6 +36,8 @@ const (
 	frameFlagEncodeOutput    uint32 = 1 << 1 // the target is not an sRGB format: encode the result in the shader
 	frameFlagTonemapReinhard uint32 = 1 << 2 // apply Reinhard tone mapping before sRGB encoding
 	frameFlagTonemapACES     uint32 = 1 << 3 // apply ACES filmic tone mapping before sRGB encoding
+	frameFlagNoEmissive      uint32 = 1 << 4 // skip emissive (multi-pass accumulation adds it once)
+	frameFlagNoSpecular      uint32 = 1 << 5 // diffuse only (point-sampled sky lights would draw speckles)
 )
 
 // isSRGBFormat reports whether writing to a texture of this format encodes linear values to sRGB in hardware.
@@ -65,6 +67,12 @@ func (r *Renderer) frameFlags() uint32 {
 		if !isSRGBFormat(r.surfaceFormat) {
 			flags |= frameFlagEncodeOutput
 		}
+	}
+	if !r.emissiveEnabled() {
+		flags |= frameFlagNoEmissive
+	}
+	if !r.specularEnabled() {
+		flags |= frameFlagNoSpecular
 	}
 	switch r.toneMapping {
 	case ToneMappingReinhard:
@@ -99,3 +107,13 @@ func (r *Renderer) textureFormat(cs ColorSpace) gputypes.TextureFormat {
 	}
 	return gputypes.TextureFormatRGBA8Unorm
 }
+
+// SetEmissiveEnabled turns the emissive term of StandardMaterial on (default) or off. Multi-pass
+// accumulation renders the scene many times and wants the emission in exactly one of the passes.
+func (r *Renderer) SetEmissiveEnabled(enabled bool) { r.noEmissive = !enabled }
+
+// SetSpecularEnabled turns the specular term of StandardMaterial on (default) or off (diffuse only).
+func (r *Renderer) SetSpecularEnabled(enabled bool) { r.noSpecular = !enabled }
+
+func (r *Renderer) emissiveEnabled() bool { return !r.noEmissive }
+func (r *Renderer) specularEnabled() bool { return !r.noSpecular }

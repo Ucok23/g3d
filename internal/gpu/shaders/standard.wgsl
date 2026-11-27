@@ -115,6 +115,8 @@ const FLAG_MANAGED: u32 = 1u;
 const FLAG_ENCODE_OUTPUT: u32 = 2u;
 const FLAG_TONEMAP_REINHARD: u32 = 4u;
 const FLAG_TONEMAP_ACES: u32 = 8u;
+const FLAG_NO_EMISSIVE: u32 = 16u;
+const FLAG_NO_SPECULAR: u32 = 32u;
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let v = max(c, vec3<f32>(0.0));
@@ -353,7 +355,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let NdotH = max(dot(N, H), 0.0);
 
             let diffuse = diffuse_albedo * NdotL;
-            let specular = spec_tint * pow(NdotH, shininess) * specular_strength;
+            var specular = spec_tint * pow(NdotH, shininess) * specular_strength;
+            if (frame.flags & FLAG_NO_SPECULAR) != 0u {
+                specular = vec3<f32>(0.0);
+            }
 
             var vis = 1.0;
             if frame.shadow_params.w > 0.5 && (i + 1u) == u32(frame.shadow_params.w) {
@@ -367,7 +372,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (frame.flags & FLAG_MANAGED) != 0u {
         emissive = srgb_to_linear(emissive);
     }
-    result = result + emissive * em_sample.rgb;
+    if (frame.flags & FLAG_NO_EMISSIVE) == 0u {
+        result = result + emissive * em_sample.rgb;
+    }
 
     if (frame.flags & (FLAG_TONEMAP_REINHARD | FLAG_TONEMAP_ACES)) != 0u {
         let exp_mul = select(1.0, frame.exposure, frame.exposure > 0.0);
