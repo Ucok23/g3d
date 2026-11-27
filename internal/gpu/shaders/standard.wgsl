@@ -354,7 +354,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let NdotL = max(dot(N, L), 0.0);
             let NdotH = max(dot(N, H), 0.0);
 
-            let diffuse = diffuse_albedo * NdotL;
+            // Diffuse-only passes (sky sampling) stand in for ambient light, which tints metals with their base
+            // color too; with the metal's own zero diffuse they would render black.
+            var lit_albedo = diffuse_albedo;
+            if (frame.flags & FLAG_NO_SPECULAR) != 0u {
+                lit_albedo = base_color;
+            }
+            let diffuse = lit_albedo * NdotL;
             var specular = spec_tint * pow(NdotH, shininess) * specular_strength;
             if (frame.flags & FLAG_NO_SPECULAR) != 0u {
                 specular = vec3<f32>(0.0);
