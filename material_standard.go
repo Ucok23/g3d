@@ -91,7 +91,7 @@ func (m *StandardMaterial) AlphaMode() AlphaMode { return m.alphaMode }
 // AlphaCutoff returns the alpha test threshold for AlphaModeMask.
 func (m *StandardMaterial) AlphaCutoff() float32 { return m.alphaCutoff }
 
-// UniformData returns 32 bytes encoding the material properties for GPU upload.
+// UniformData returns 48 bytes encoding the material properties for GPU upload.
 // The alpha component of color is pre-multiplied with opacity.
 //
 // Layout (matches WGSL MaterialUniforms struct):
@@ -104,14 +104,15 @@ func (m *StandardMaterial) AlphaCutoff() float32 { return m.alphaCutoff }
 //	offset 20: roughness     float32
 //	offset 24: alpha_cutoff  float32
 //	offset 28: double_sided  float32 (1 when the material is double-sided, else 0)
+//	offset 32: emissive RGB  [3]float32 + pad (16 bytes)
 func (m *StandardMaterial) UniformData() []byte {
-	var buf [32]byte
+	var buf [48]byte
 	// Color RGBA (vec4<f32>, 16 bytes)
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(m.color.R))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(m.color.G))
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(m.color.B))
 	binary.LittleEndian.PutUint32(buf[12:16], math.Float32bits(m.color.A*m.opacity))
-	// Scalar properties (3 x float32 + padding)
+	// Scalar properties (3 x float32 + double_sided)
 	binary.LittleEndian.PutUint32(buf[16:20], math.Float32bits(m.metallic))
 	binary.LittleEndian.PutUint32(buf[20:24], math.Float32bits(m.roughness))
 	binary.LittleEndian.PutUint32(buf[24:28], math.Float32bits(m.alphaCutoff))
@@ -119,5 +120,9 @@ func (m *StandardMaterial) UniformData() []byte {
 		// the shader turns the normal of a back face toward the viewer
 		binary.LittleEndian.PutUint32(buf[28:32], math.Float32bits(1))
 	}
+	// Emissive RGB + pad (vec4<f32>, 16 bytes)
+	binary.LittleEndian.PutUint32(buf[32:36], math.Float32bits(m.emissive.R))
+	binary.LittleEndian.PutUint32(buf[36:40], math.Float32bits(m.emissive.G))
+	binary.LittleEndian.PutUint32(buf[40:44], math.Float32bits(m.emissive.B))
 	return buf[:]
 }

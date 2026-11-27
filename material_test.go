@@ -307,8 +307,8 @@ func TestStandardMaterialRenderBucket(t *testing.T) {
 func TestStandardMaterialUniformDataSize(t *testing.T) {
 	m := NewStandardMaterial()
 	data := m.UniformData()
-	if len(data) != 32 {
-		t.Fatalf("UniformData length = %d, want 32", len(data))
+	if len(data) != 48 {
+		t.Fatalf("UniformData length = %d, want 48", len(data))
 	}
 }
 

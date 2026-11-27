@@ -74,10 +74,10 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 
 	// Determine material uniform size from shader ID.
 	// basic.wgsl MaterialUniforms = 16 bytes (vec4 color).
-	// standard.wgsl MaterialUniforms = 32 bytes (vec4 color + metalness + roughness + alphaCutoff + pad).
+	// standard.wgsl MaterialUniforms = 48 bytes (vec4 color + 4 scalars + vec4 emissive).
 	materialUniformSize := uint64(16)
 	if key.ShaderID == ShaderStandard {
-		materialUniformSize = 32
+		materialUniformSize = 48
 	}
 
 	// Group 0: per-frame uniforms (FrameUniforms, 224 bytes).

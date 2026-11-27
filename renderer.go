@@ -72,6 +72,8 @@ type Renderer struct {
 
 	// How colors are treated (see ColorManagement); the zero value keeps the earlier behavior.
 	colorManagement ColorManagement
+	toneMapping     ToneMapping
+	exposure        float32
 
 	// Frame bind groups (group 0) — one per distinct pipeline used in a frame.
 	// Released at the start of the next frame, when the GPU has finished the
@@ -286,6 +288,7 @@ func (r *Renderer) buildFrameUniforms(scene *Scene, camera Camera, cameraPos Vec
 	data.ViewProjection = camera.ViewProjectionMatrix()
 	data.CameraPosition = [4]float32{cameraPos.X, cameraPos.Y, cameraPos.Z, 1.0}
 	data.Flags = r.frameFlags()
+	data.Exposure = r.Exposure()
 
 	lightIdx := uint32(0)
 	scene.TraverseVisible(func(node *Node) {
@@ -653,10 +656,10 @@ func (r *Renderer) ensureObjectPool(device *wgpu.Device, idx int) error {
 	}
 
 	// Material uniform pool must match the object pool size.
-	// Use 32 bytes (StandardMaterial size) as the max — BasicMaterial (16 bytes)
-	// fits within 32 bytes with zero padding, and WriteBuffer only writes the
+	// Use 48 bytes (StandardMaterial size) as the max — BasicMaterial (16 bytes)
+	// fits within 48 bytes with zero padding, and WriteBuffer only writes the
 	// actual data length.
-	const maxMaterialUniformSize = 32
+	const maxMaterialUniformSize = 48
 	for idx >= len(r.materialUniformBufs) {
 		n := len(r.materialUniformBufs)
 		buf, err := device.CreateBuffer(&wgpu.BufferDescriptor{

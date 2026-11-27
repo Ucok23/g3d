@@ -25,8 +25,8 @@ struct FrameUniforms {
     camera_position: vec4<f32>,      //  16 bytes (offset  64) — vec4, NOT vec3!
     lights: array<LightData, 4>,     // 128 bytes (offset  80) — 4 x 32
     light_count: u32,                //   4 bytes (offset 208)
-    flags: u32,                      //   4 bytes (offset 212) — FLAG_MANAGED | FLAG_ENCODE_OUTPUT
-    _pad1: u32,                      //   4 bytes (offset 216)
+    flags: u32,                      //   4 bytes (offset 212) — FLAG_MANAGED | FLAG_ENCODE_OUTPUT | FLAG_TONEMAP_*
+    exposure: f32,                   //   4 bytes (offset 216) — tone-mapping exposure multiplier
     _pad2: u32,                      //   4 bytes (offset 220)
 };                                   // Total: 224 bytes, 16-byte aligned
 
@@ -41,7 +41,8 @@ struct MaterialUniforms {
     roughness: f32,                  //  4 bytes (offset 20)
     alpha_cutoff: f32,               //  4 bytes (offset 24)
     double_sided: f32,               //  4 bytes (offset 28) — 1.0 when the material is double-sided, else 0.0
-};                                   // Total: 32 bytes, 16-byte aligned
+    emissive: vec4<f32>,             // 16 bytes (offset 32) — RGB emissive + pad
+};                                   // Total: 48 bytes, 16-byte aligned
 
 // --- Bind groups ---
 
@@ -98,6 +99,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 const FLAG_MANAGED: u32 = 1u;
 const FLAG_ENCODE_OUTPUT: u32 = 2u;
+const FLAG_TONEMAP_REINHARD: u32 = 4u;
+const FLAG_TONEMAP_ACES: u32 = 8u;
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let v = max(c, vec3<f32>(0.0));
@@ -107,6 +110,22 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
     let v = max(c, vec3<f32>(0.0));
     return select(1.055 * pow(v, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055), v * 12.92, v <= vec3<f32>(0.0031308));
+}
+
+fn tonemap_reinhard(c: vec3<f32>) -> vec3<f32> {
+    let v = max(c, vec3<f32>(0.0));
+    return v / (vec3<f32>(1.0) + v);
+}
+
+// Narkowicz 2015 ACES filmic approximation.
+fn tonemap_aces(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    let a = 2.51;
+    let b = 0.03;
+    let d = 2.43;
+    let e = 0.59;
+    let f = 0.14;
+    return clamp((x * (a * x + b)) / (x * (d * x + e) + f), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 
@@ -170,6 +189,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let specular = vec3<f32>(pow(NdotH, shininess)) * specular_strength;
 
             result = result + (diffuse + specular) * light_color;
+        }
+    }
+
+    var emissive = material.emissive.rgb;
+    if (frame.flags & FLAG_MANAGED) != 0u {
+        emissive = srgb_to_linear(emissive);
+    }
+    result = result + emissive;
+
+    if (frame.flags & (FLAG_TONEMAP_REINHARD | FLAG_TONEMAP_ACES)) != 0u {
+        let exp_mul = select(1.0, frame.exposure, frame.exposure > 0.0);
+        result = result * exp_mul;
+        if (frame.flags & FLAG_TONEMAP_ACES) != 0u {
+            result = tonemap_aces(result);
+        } else {
+            result = tonemap_reinhard(result);
         }
     }
 

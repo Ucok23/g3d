@@ -32,8 +32,10 @@ const (
 
 // Frame flags, shared with the shaders (FrameUniforms.flags).
 const (
-	frameFlagManaged      uint32 = 1 << 0 // colors are sRGB inputs: convert to linear for lighting
-	frameFlagEncodeOutput uint32 = 1 << 1 // the target is not an sRGB format: encode the result in the shader
+	frameFlagManaged         uint32 = 1 << 0 // colors are sRGB inputs: convert to linear for lighting
+	frameFlagEncodeOutput    uint32 = 1 << 1 // the target is not an sRGB format: encode the result in the shader
+	frameFlagTonemapReinhard uint32 = 1 << 2 // apply Reinhard tone mapping before sRGB encoding
+	frameFlagTonemapACES     uint32 = 1 << 3 // apply ACES filmic tone mapping before sRGB encoding
 )
 
 // isSRGBFormat reports whether writing to a texture of this format encodes linear values to sRGB in hardware.
@@ -55,14 +57,20 @@ func (r *Renderer) SetColorManagement(m ColorManagement) {
 // ColorManagement returns the selected color pipeline.
 func (r *Renderer) ColorManagement() ColorManagement { return r.colorManagement }
 
-// frameFlags returns the frame flags for the current color pipeline and target format.
+// frameFlags returns the frame flags for the current color pipeline, tone mapping, and target format.
 func (r *Renderer) frameFlags() uint32 {
-	if r.colorManagement != ColorManagementSRGB {
-		return 0
+	var flags uint32
+	if r.colorManagement == ColorManagementSRGB {
+		flags |= frameFlagManaged
+		if !isSRGBFormat(r.surfaceFormat) {
+			flags |= frameFlagEncodeOutput
+		}
 	}
-	flags := frameFlagManaged
-	if !isSRGBFormat(r.surfaceFormat) {
-		flags |= frameFlagEncodeOutput
+	switch r.toneMapping {
+	case ToneMappingReinhard:
+		flags |= frameFlagTonemapReinhard
+	case ToneMappingACES:
+		flags |= frameFlagTonemapACES
 	}
 	return flags
 }

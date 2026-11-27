@@ -39,14 +39,16 @@ type LightData struct {
 //	offset  80: Lights         [4]LightData (128 bytes)
 //	offset 208: LightCount     uint32       (4 bytes)
 //	offset 212: Flags          uint32       (4 bytes, see the frame flags of the renderer)
-//	offset 216: Pad            [2]uint32    (8 bytes)
+//	offset 216: Exposure       float32      (4 bytes, tone-mapping exposure multiplier)
+//	offset 220: Pad            uint32       (4 bytes)
 type FrameUniformsData struct {
 	ViewProjection [16]float32
 	CameraPosition [4]float32
 	Lights         [MaxLights]LightData
 	LightCount     uint32
 	Flags          uint32
-	Pad            [2]uint32
+	Exposure       float32
+	Pad            uint32
 }
 
 // ObjectUniformsData holds per-object data for GPU upload. Layout matches
@@ -102,7 +104,8 @@ func PackFrameUniforms(data *FrameUniformsData) []byte {
 	binary.LittleEndian.PutUint32(buf[off:off+4], data.LightCount)
 
 	binary.LittleEndian.PutUint32(buf[212:216], data.Flags)
-	// Pad: 8 bytes (2 x uint32, zeroed) — buf is zero-initialized.
+	binary.LittleEndian.PutUint32(buf[216:220], math.Float32bits(data.Exposure))
+	// Pad: 4 bytes (zeroed) — buf is zero-initialized.
 
 	return buf
 }
