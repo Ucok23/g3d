@@ -108,11 +108,24 @@ func (r *Renderer) shadowBias() float32 {
 	return r.shadows.bias
 }
 
-func (r *Renderer) shadowNormalBias() float32 {
-	if r.shadows.normalBias <= 0 {
+// shadowNormalBias returns the world-space normal offset. Unless set explicitly it scales with the size
+// of the shadow casters (0.35% of their bounding radius, 3 cm at a house's 8 m), so small objects such
+// as a 5 cm model are not pushed 3 cm off their own surface.
+func (r *Renderer) shadowNormalBias(sceneRadius float32) float32 {
+	if r.shadows.normalBias > 0 {
+		return r.shadows.normalBias
+	}
+	if sceneRadius <= 0 {
 		return defaultShadowNormalBias
 	}
-	return r.shadows.normalBias
+	b := 0.0035 * sceneRadius
+	if b < 1e-5 {
+		b = 1e-5
+	}
+	if b > 0.1 {
+		b = 0.1
+	}
+	return b
 }
 
 func (r *Renderer) ensureShadowSampler(device *wgpu.Device) (*wgpu.Sampler, error) {
@@ -333,7 +346,7 @@ func (r *Renderer) recordShadowPass(
 	frameData.LightViewProjection = [16]float32(lightVP)
 	frameData.ShadowParams = [4]float32{
 		r.shadowBias(),
-		r.shadowNormalBias(),
+		r.shadowNormalBias(sceneBox.Size().Length() * 0.5),
 		1.0 / float32(dim),
 		float32(dirIdx + 1),
 	}
