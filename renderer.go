@@ -75,6 +75,7 @@ type Renderer struct {
 	colorManagement ColorManagement
 	toneMapping     ToneMapping
 	shadingModel    ShadingModel
+	ground          [4]float32
 	noEmissive      bool
 	noSpecular      bool
 	exposure        float32
@@ -294,6 +295,7 @@ func (r *Renderer) buildFrameUniforms(scene *Scene, camera Camera, cameraPos Vec
 	data.ViewProjection = camera.ViewProjectionMatrix()
 	data.CameraPosition = [4]float32{cameraPos.X, cameraPos.Y, cameraPos.Z, 1.0}
 	data.Flags = r.frameFlags()
+	data.Ground = r.ground
 	data.Exposure = r.Exposure()
 
 	lightIdx := uint32(0)

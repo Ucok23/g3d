@@ -80,7 +80,7 @@ func (c *PipelineCache) createPipeline(key PipelineKey) (*PipelineBundle, error)
 		materialUniformSize = 64
 	}
 
-	// Group 0: per-frame uniforms (FrameUniforms, 320 bytes).
+	// Group 0: per-frame uniforms (FrameUniforms, 336 bytes).
 	// StandardMaterial also binds the directional shadow depth map (binding 1) and comparison sampler (binding 2).
 	frameEntries := []gputypes.BindGroupLayoutEntry{
 		{

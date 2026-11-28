@@ -7,8 +7,8 @@ import (
 
 // Uniform buffer sizes must match WGSL struct layouts byte-for-byte.
 const (
-	// FrameUniformsSize is the byte size of the FrameUniforms struct (320 bytes).
-	FrameUniformsSize = 320
+	// FrameUniformsSize is the byte size of the FrameUniforms struct (336 bytes).
+	FrameUniformsSize = 336
 
 	// ShadowFrameUniformsSize is the byte size of ShadowFrameUniforms (64 bytes, 1 mat4x4).
 	ShadowFrameUniformsSize = 64
@@ -35,7 +35,7 @@ type LightData struct {
 }
 
 // FrameUniformsData holds per-frame data for GPU upload. Layout matches the
-// WGSL FrameUniforms struct (320 bytes total).
+// WGSL FrameUniforms struct (336 bytes total).
 //
 //	offset   0: ViewProjection      [16]float32 (64 bytes)
 //	offset  64: CameraPosition      [4]float32  (16 bytes — vec4, NOT vec3!)
@@ -47,6 +47,7 @@ type LightData struct {
 //	offset 224: LightViewProjection [16]float32  (64 bytes, directional shadow matrix)
 //	offset 288: ShadowParams        [4]float32   (16 bytes: depthBias, normalBias, texelSize, shadowLightIdx+1)
 //	offset 304: ShadowSoft          [4]float32   (16 bytes: mapWorldWidth, depthRangeWorld, softness tan(angular radius), mapWorldHeight)
+//	offset 320: Ground              [4]float32   (16 bytes: linear ground radiance rgb, w=1 when enabled)
 type FrameUniformsData struct {
 	ViewProjection      [16]float32
 	CameraPosition      [4]float32
@@ -58,6 +59,7 @@ type FrameUniformsData struct {
 	LightViewProjection [16]float32
 	ShadowParams        [4]float32
 	ShadowSoft          [4]float32
+	Ground              [4]float32
 }
 
 // ObjectUniformsData holds per-object data for GPU upload. Layout matches
@@ -130,6 +132,11 @@ func PackFrameUniforms(data *FrameUniformsData) []byte {
 	// ShadowSoft: 16 bytes at [304:320]
 	for i := 0; i < 4; i++ {
 		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(data.ShadowSoft[i]))
+		off += 4
+	}
+	// Ground: 16 bytes at [320:336]
+	for i := 0; i < 4; i++ {
+		binary.LittleEndian.PutUint32(buf[off:off+4], math.Float32bits(data.Ground[i]))
 		off += 4
 	}
 

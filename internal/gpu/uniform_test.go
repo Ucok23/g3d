@@ -7,8 +7,8 @@ import (
 )
 
 func TestFrameUniformsSize(t *testing.T) {
-	if FrameUniformsSize != 320 {
-		t.Errorf("FrameUniformsSize = %d, want 320", FrameUniformsSize)
+	if FrameUniformsSize != 336 {
+		t.Errorf("FrameUniformsSize = %d, want 336", FrameUniformsSize)
 	}
 }
 

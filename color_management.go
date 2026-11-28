@@ -139,3 +139,16 @@ func (r *Renderer) SetShadingModel(m ShadingModel) { r.shadingModel = m }
 
 // ShadingModel returns the active lighting model.
 func (r *Renderer) ShadingModel() ShadingModel { return r.shadingModel }
+
+// SetGroundRadiance sets the radiance of the environment below the horizon for ShadingGGX: lit ground
+// bounces light up into a model, so a studio floor lights its underside and shows in its reflections.
+// color is an sRGB color (converted to linear with color management on) and is multiplied by intensity,
+// which may exceed 1. intensity <= 0 (default) removes the ground: the whole environment is the ambient light.
+func (r *Renderer) SetGroundRadiance(color Color, intensity float32) {
+	if intensity <= 0 {
+		r.ground = [4]float32{}
+		return
+	}
+	c := r.lightColor([3]float32{color.R, color.G, color.B})
+	r.ground = [4]float32{c[0] * intensity, c[1] * intensity, c[2] * intensity, 1}
+}

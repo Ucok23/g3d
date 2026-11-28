@@ -31,7 +31,8 @@ struct FrameUniforms {
     light_view_projection: mat4x4<f32>, //  64 bytes (offset 224) — directional shadow matrix
     shadow_params: vec4<f32>,           //  16 bytes (offset 288) — x=depthBias, y=normalBias, z=texelSize, w=lightIdx+1
     shadow_soft: vec4<f32>,             //  16 bytes (offset 304) — x=mapWorldWidth, y=depthRangeWorld, z=softness tan(angular radius), w=mapWorldHeight
-};                                      // Total: 320 bytes, 16-byte aligned
+    ground: vec4<f32>,                  //  16 bytes (offset 320) — rgb=linear radiance of the lower hemisphere, w=1 when enabled
+};                                      // Total: 336 bytes, 16-byte aligned
 
 struct ObjectUniforms {
     model: mat4x4<f32>,              // 64 bytes (offset  0)
@@ -365,7 +366,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let ab = env_brdf_approx(roughness, nov);
                 let f_r = f0 * ab.x + vec3<f32>(ab.y);
                 let kd = (vec3<f32>(1.0) - f_r) * (1.0 - metalness);
-                result = result + (kd * base_color + f_r) * light_color * ao;
+                // Two-hemisphere environment: the ambient light above the horizon and, when set, the
+                // bounce radiance of the ground below it (a lit studio floor is a large light source).
+                let sky = light_color;
+                var gnd = sky;
+                if frame.ground.w > 0.5 {
+                    gnd = frame.ground.rgb;
+                }
+                // Irradiance of a sky/ground split on a surface tilted from vertical (exact for a step environment).
+                let irradiance = mix(gnd, sky, 0.5 + 0.5 * N.y);
+                // Reflection: the horizon edge blurs with roughness.
+                let R = reflect(-V, N);
+                let w = mix(0.02, 0.6, roughness);
+                let reflected = mix(gnd, sky, smoothstep(-w, w, R.y));
+                result = result + (kd * base_color * irradiance + f_r * reflected) * ao;
             } else {
                 // Ambient: uniform illumination modulated by ambient occlusion.
                 result = result + base_color * light_color * ao;

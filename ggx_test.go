@@ -51,3 +51,43 @@ func TestGGXAmbientFresnelBrightensGrazingAngles(t *testing.T) {
 		t.Errorf("GGX at steep angles should stay close to Blinn-Phong: ggx=%d blinn=%d", nearG[0], nearB[0])
 	}
 }
+
+// A surface facing down is lit by the ground below the horizon, not by the sky: raising the ground
+// radiance must brighten it, and must leave an up-facing surface untouched. The quad is double-sided, so
+// the camera side decides which way its normal points.
+func TestGroundRadianceLightsDownFacingSurfaces(t *testing.T) {
+	const size uint32 = 64
+	render := func(camY, ground float32) [4]byte {
+		provider := newSoftwareProvider(t, gputypes.TextureFormatRGBA8Unorm)
+		r, err := NewRenderer(provider)
+		if err != nil {
+			t.Fatalf("NewRenderer: %v", err)
+		}
+		defer r.Release()
+		r.SetColorManagement(ColorManagementSRGB)
+		r.SetShadingModel(ShadingGGX)
+		r.SetGroundRadiance(White, ground)
+		r.SetSize(size, size)
+
+		scene := NewScene()
+		scene.SetBackground(Black)
+		amb := NewNode()
+		amb.SetUserData(NewAmbientLight(WithLightColor(White), WithLightIntensity(0.4)))
+		scene.Add(amb)
+		quad := NewMesh(NewPlaneGeometry(4, 4), NewStandardMaterial(WithColor(RGB(0.6, 0.6, 0.6)), WithRoughness(1), WithDoubleSided(true)))
+		scene.Add(quad.MeshNode())
+		cam := NewPerspectiveCamera(50, 1, 0.1, 50)
+		cam.CameraNode().SetPosition(Vec3{Y: camY, Z: 0.01})
+		cam.CameraNode().LookAt(Vec3{})
+		return pixelAt(renderSoftwareRGBA8(t, provider, r, scene, cam, size), size, size/2, size/2)
+	}
+	up0, up1 := render(4, 0), render(4, 1.5)
+	down0, down1 := render(-4, 0), render(-4, 1.5)
+	t.Logf("up-facing ground off=%v on=%v | down-facing ground off=%v on=%v", up0, up1, down0, down1)
+	if d := int(up1[0]) - int(up0[0]); d < -2 || d > 2 {
+		t.Errorf("an up-facing surface must not depend on the ground radiance: off=%d on=%d", up0[0], up1[0])
+	}
+	if int(down1[0]) < int(down0[0])+40 {
+		t.Errorf("a down-facing surface must brighten with the ground radiance: off=%d on=%d", down0[0], down1[0])
+	}
+}
