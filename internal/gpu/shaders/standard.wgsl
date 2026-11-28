@@ -117,6 +117,7 @@ const FLAG_TONEMAP_REINHARD: u32 = 4u;
 const FLAG_TONEMAP_ACES: u32 = 8u;
 const FLAG_NO_EMISSIVE: u32 = 16u;
 const FLAG_NO_SPECULAR: u32 = 32u;
+const FLAG_GGX: u32 = 64u;
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let v = max(c, vec3<f32>(0.0));
@@ -144,6 +145,18 @@ fn tonemap_aces(c: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (d * x + e) + f), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+
+
+const PI: f32 = 3.14159265359;
+
+// Karis (2014) analytic fit of the split-sum environment BRDF: returns (scale, bias) for F0.
+fn env_brdf_approx(roughness: f32, n_dot_v: f32) -> vec2<f32> {
+    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let r = roughness * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * n_dot_v)) * r.x + r.y;
+    return vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+}
 
 // Perturb surface normal N using a tangent-space normal map (OpenGL/glTF convention:
 // +R right (+u), +G up (-v), +B out (+N)) derived from screen-space derivatives of world
@@ -344,8 +357,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_color = light.color * light.intensity;
 
         if light.light_type == LIGHT_AMBIENT {
-            // Ambient: uniform illumination modulated by ambient occlusion.
-            result = result + base_color * light_color * ao;
+            if (frame.flags & FLAG_GGX) != 0u && (frame.flags & FLAG_NO_SPECULAR) == 0u {
+                // Uniform environment: diffuse plus the split-sum specular reflection (Fresnel-weighted),
+                // which is what a uniform world lights a surface with in a path tracer.
+                let nov = max(dot(N, V), 1e-4);
+                let f0 = mix(vec3<f32>(0.04), base_color, metalness);
+                let ab = env_brdf_approx(roughness, nov);
+                let f_r = f0 * ab.x + vec3<f32>(ab.y);
+                let kd = (vec3<f32>(1.0) - f_r) * (1.0 - metalness);
+                result = result + (kd * base_color + f_r) * light_color * ao;
+            } else {
+                // Ambient: uniform illumination modulated by ambient occlusion.
+                result = result + base_color * light_color * ao;
+            }
         } else if light.light_type == LIGHT_DIRECTIONAL {
             // Blinn-Phong directional light with metallic-roughness modulation.
             let L = normalize(-light.direction);
@@ -360,9 +384,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             if (frame.flags & FLAG_NO_SPECULAR) != 0u {
                 lit_albedo = base_color;
             }
-            let diffuse = lit_albedo * NdotL;
+            var diffuse = lit_albedo * NdotL;
             var specular = spec_tint * pow(NdotH, shininess) * specular_strength;
-            if (frame.flags & FLAG_NO_SPECULAR) != 0u {
+            if ((frame.flags & FLAG_GGX) != 0u) && ((frame.flags & FLAG_NO_SPECULAR) == 0u) {
+                // Cook-Torrance GGX with height-correlated Smith visibility and Schlick Fresnel (glTF 2.0).
+                // Light intensity is irradiance / pi in this renderer, so the specular lobe carries a pi.
+                let NdotV = max(dot(N, V), 1e-4);
+                let VdotH = max(dot(V, H), 0.0);
+                // The sun is a disc, not a point: a floor on the roughness keeps a mirror from a 1 px glint.
+                let a = max(roughness * roughness, 0.02);
+                let a2 = a * a;
+                let d_den = NdotH * NdotH * (a2 - 1.0) + 1.0;
+                let D = a2 / (PI * d_den * d_den);
+                let vis_smith = 0.5 / (NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2) + NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2) + 1e-5);
+                let f0 = mix(vec3<f32>(0.04), base_color, metalness);
+                let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - VdotH, 5.0);
+                specular = fresnel * (D * vis_smith * PI * NdotL);
+                diffuse = (vec3<f32>(1.0) - fresnel) * diffuse_albedo * NdotL;
+            } else if (frame.flags & FLAG_NO_SPECULAR) != 0u {
                 specular = vec3<f32>(0.0);
             }
 

@@ -38,6 +38,7 @@ const (
 	frameFlagTonemapACES     uint32 = 1 << 3 // apply ACES filmic tone mapping before sRGB encoding
 	frameFlagNoEmissive      uint32 = 1 << 4 // skip emissive (multi-pass accumulation adds it once)
 	frameFlagNoSpecular      uint32 = 1 << 5 // diffuse only (point-sampled sky lights would draw speckles)
+	frameFlagGGX             uint32 = 1 << 6 // Cook-Torrance GGX + Fresnel + split-sum ambient instead of Blinn-Phong
 )
 
 // isSRGBFormat reports whether writing to a texture of this format encodes linear values to sRGB in hardware.
@@ -73,6 +74,9 @@ func (r *Renderer) frameFlags() uint32 {
 	}
 	if !r.specularEnabled() {
 		flags |= frameFlagNoSpecular
+	}
+	if r.shadingModel == ShadingGGX {
+		flags |= frameFlagGGX
 	}
 	switch r.toneMapping {
 	case ToneMappingReinhard:
@@ -117,3 +121,21 @@ func (r *Renderer) SetSpecularEnabled(enabled bool) { r.noSpecular = !enabled }
 
 func (r *Renderer) emissiveEnabled() bool { return !r.noEmissive }
 func (r *Renderer) specularEnabled() bool { return !r.noSpecular }
+
+// ShadingModel selects the lighting model of StandardMaterial.
+type ShadingModel uint8
+
+const (
+	// ShadingBlinnPhong is the default: the earlier Blinn-Phong approximation.
+	ShadingBlinnPhong ShadingModel = iota
+	// ShadingGGX is the glTF 2.0 metallic-roughness model: Cook-Torrance GGX with Smith visibility and
+	// Schlick Fresnel for directional lights, and a Fresnel-weighted (split-sum) reflection of a uniform
+	// environment for the ambient light.
+	ShadingGGX
+)
+
+// SetShadingModel selects the lighting model (default ShadingBlinnPhong).
+func (r *Renderer) SetShadingModel(m ShadingModel) { r.shadingModel = m }
+
+// ShadingModel returns the active lighting model.
+func (r *Renderer) ShadingModel() ShadingModel { return r.shadingModel }

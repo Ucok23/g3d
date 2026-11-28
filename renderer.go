@@ -74,6 +74,7 @@ type Renderer struct {
 	// How colors are treated (see ColorManagement); the zero value keeps the earlier behavior.
 	colorManagement ColorManagement
 	toneMapping     ToneMapping
+	shadingModel    ShadingModel
 	noEmissive      bool
 	noSpecular      bool
 	exposure        float32
